@@ -32,8 +32,19 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}" 2>/dev/null || echo ".")" && pwd)"
 cd "$SCRIPT_DIR"
+
+# 1. 自动环境自愈检查：若 .env 不存在，优先从 .env.example 复制初始化
+if [ ! -f ".env" ]; then
+    if [ -f ".env.example" ]; then
+        echo -e "\033[1;33m[提示] 未找到 .env 配置文件，自动从 .env.example 复制初始化...\033[0m"
+        cp ".env.example" ".env"
+    else
+        touch ".env"
+    fi
+fi
 
 if [ -f ".env" ]; then
     set -a
@@ -41,6 +52,19 @@ if [ -f ".env" ]; then
     . ./.env
     set +a
 fi
+
+# 更新/持久化变量到 .env 文件的辅助函数
+update_env_var() {
+    local key="$1"
+    local val="$2"
+    if [ -f ".env" ]; then
+        if grep -q "^${key}=" ".env" 2>/dev/null; then
+            sed -i.bak "s|^${key}=.*|${key}=${val}|" ".env" 2>/dev/null && rm -f ".env.bak"
+        else
+            echo "${key}=${val}" >> ".env"
+        fi
+    fi
+}
 
 # 外部访问端口默认统一为 443
 PORT="${PORT:-${EXTERNAL_PORT:-443}}"
@@ -515,7 +539,103 @@ show_status() {
     echo "============================================"
 }
 
-CMD="${1:-}"
+# 解析命令行参数与自定义变量
+CMD=""
+CUSTOM_PORT=""
+CUSTOM_ADMIN_USER=""
+CUSTOM_ADMIN_PASS=""
+CUSTOM_ADMIN_NICK=""
+CUSTOM_DOMAIN=""
+EXTRA_ARGS=()
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        start|stop|restart|status|add_nginx|help)
+            if [ -z "$CMD" ]; then
+                CMD="$1"
+            else
+                EXTRA_ARGS+=("$1")
+            fi
+            shift
+            ;;
+        -p|--port)
+            CUSTOM_PORT="$2"
+            shift 2
+            ;;
+        -u|--admin|--user|--username)
+            CUSTOM_ADMIN_USER="$2"
+            shift 2
+            ;;
+        -P|--password|--pass)
+            CUSTOM_ADMIN_PASS="$2"
+            shift 2
+            ;;
+        -n|--nickname)
+            CUSTOM_ADMIN_NICK="$2"
+            shift 2
+            ;;
+        -d|--domain|--server-name)
+            CUSTOM_DOMAIN="$2"
+            shift 2
+            ;;
+        -h|--help)
+            CMD="help"
+            shift
+            ;;
+        --)
+            shift
+            EXTRA_ARGS+=("$@")
+            break
+            ;;
+        *)
+            echo -e "\033[1;33m[警告] 未知选项: $1\033[0m"
+            shift
+            ;;
+    esac
+done
+
+[ -z "$CMD" ] && CMD="help"
+
+# 应用自定义参数并持久化至 .env
+if [ -n "$CUSTOM_PORT" ]; then
+    FRONTEND_PORT="$CUSTOM_PORT"
+    update_env_var "FRONTEND_PORT" "$CUSTOM_PORT"
+    echo -e "\033[0;32m[配置] 前端访问端口已设置为: $CUSTOM_PORT (已同步至 .env)\033[0m"
+fi
+
+if [ -n "$CUSTOM_ADMIN_USER" ]; then
+    ADMIN_USERNAME="$CUSTOM_ADMIN_USER"
+    ADMIN_PHONE="$CUSTOM_ADMIN_USER"
+    update_env_var "ADMIN_USERNAME" "$CUSTOM_ADMIN_USER"
+    update_env_var "ADMIN_PHONE" "$CUSTOM_ADMIN_USER"
+    echo -e "\033[0;32m[配置] 管理员账号已设置为: $CUSTOM_ADMIN_USER (已同步至 .env)\033[0m"
+fi
+
+if [ -n "$CUSTOM_ADMIN_PASS" ]; then
+    ADMIN_PASSWORD="$CUSTOM_ADMIN_PASS"
+    update_env_var "ADMIN_PASSWORD" "$CUSTOM_ADMIN_PASS"
+    echo -e "\033[0;32m[配置] 管理员密码已更新 (已同步至 .env)\033[0m"
+fi
+
+if [ -n "$CUSTOM_ADMIN_NICK" ]; then
+    ADMIN_NICKNAME="$CUSTOM_ADMIN_NICK"
+    update_env_var "ADMIN_NICKNAME" "$CUSTOM_ADMIN_NICK"
+fi
+
+if [ -n "$CUSTOM_DOMAIN" ]; then
+    SERVER_NAME="$CUSTOM_DOMAIN"
+    update_env_var "SERVER_NAME" "$CUSTOM_DOMAIN"
+    echo -e "\033[0;32m[配置] SNI 匹配域名已设置为: $CUSTOM_DOMAIN (已同步至 .env)\033[0m"
+fi
+
+export FRONTEND_PORT
+export ADMIN_USERNAME
+export ADMIN_PHONE
+export ADMIN_PASSWORD
+export ADMIN_NICKNAME
+export SERVER_NAME
+export EXTERNAL_PORT
+
 case "$CMD" in
     start)
         cleanup_cache
@@ -524,7 +644,6 @@ case "$CMD" in
         echo ""
         echo "============================================"
         echo "  萌芽（mengya-local）启动完成！"
-        local PRIMARY_DOMAIN
         PRIMARY_DOMAIN=$(echo "$SERVER_NAME" | awk '{print $1}')
         [ -z "$PRIMARY_DOMAIN" ] && PRIMARY_DOMAIN="localhost"
         if [ "$EXTERNAL_PORT" = "443" ]; then
@@ -549,7 +668,6 @@ case "$CMD" in
         echo ""
         echo "============================================"
         echo "  萌芽（mengya-local）重启完成！"
-        local PRIMARY_DOMAIN
         PRIMARY_DOMAIN=$(echo "$SERVER_NAME" | awk '{print $1}')
         [ -z "$PRIMARY_DOMAIN" ] && PRIMARY_DOMAIN="localhost"
         if [ "$EXTERNAL_PORT" = "443" ]; then
@@ -565,19 +683,29 @@ case "$CMD" in
     status)
         show_status
         ;;
-    help|--help|-h|"")
+    help)
         echo ""
         echo "萌芽（mengya-local）本地模式管理命令："
-        echo "  ./run.sh start      启动前后端本地服务"
-        echo "  ./run.sh stop       停止本地前后端服务"
-        echo "  ./run.sh restart    重启本地前后端服务"
-        echo "  ./run.sh status     查看运行状态与端口占用"
-        echo "  ./run.sh add_nginx  生成基于 SNI 443 端口的 Nginx SSL 反向代理配置"
-        echo "  ./run.sh help       查看帮助"
+        echo "  ./run.sh start [选项]        启动前后端本地服务（启动前自动清理垃圾与缓存）"
+        echo "  ./run.sh stop                停止本地前后端服务"
+        echo "  ./run.sh restart [选项]      重启本地前后端服务（重启前自动清理垃圾与缓存）"
+        echo "  ./run.sh status              查看运行状态与端口占用"
+        echo "  ./run.sh add_nginx [选项]    生成基于 SNI 443 端口的 Nginx SSL 反向代理配置"
+        echo "  ./run.sh help                查看帮助"
         echo ""
-        echo "配置环境变量（可选）："
-        echo "  PORT=443 SERVER_NAME=mengya.local ./run.sh add_nginx"
-        echo "  ENABLE_HTTP_REDIRECT=1 ./run.sh add_nginx"
+        echo "常用自定义选项（支持在 start / restart / add_nginx 时追加，自动持久化至 .env）："
+        echo "  -p, --port <PORT>            自定义前端内部访问端口（默认 5173）"
+        echo "  -u, --admin <USER>           自定义超级管理员账号/手机号（默认 admin）"
+        echo "  -P, --password <PASS>        自定义超级管理员登录密码（默认 admin123）"
+        echo "  -n, --nickname <NAME>        自定义管理员昵称（默认 管理员）"
+        echo "  -d, --domain <DOMAIN>        自定义绑定的 SNI 域名（默认 mengya.local localhost）"
+        echo ""
+        echo "实用启动示例："
+        echo "  ./run.sh start                                 # 默认启动（端口 5173，管理员 admin / admin123）"
+        echo "  ./run.sh start -p 5175                         # 自定义以 5175 端口启动"
+        echo "  ./run.sh start -p 5173 -u superadmin -P Pass123 # 自定义端口与管理员账密启动"
+        echo "  ./run.sh restart -p 5175                       # 重启并变更为 5175 端口"
+        echo "  ./run.sh add_nginx -d mengya.myhost.com        # 为指定域名生成独立反代配置"
         echo ""
         ;;
     *)

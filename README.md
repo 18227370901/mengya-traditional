@@ -29,26 +29,47 @@
 
 ---
 
-## 三、快速开始
+## 三、快速开始与参数自定义
 
 在 `mengya-local` 根目录下执行：
 
 ```bash
-# 1. 启动前后端服务（自动检查环境、创建/同步 venv、数据迁移与创建单一管理员）
+# 1. 默认启动前后端服务（自动检查环境、清理缓存与垃圾、同步 venv、数据迁移与创建单一管理员）
 ./run.sh start
 
-# 2. 查看服务运行状态与端口占用
+# 2. 命令行直传参数自定义启动（自动同步更新至 .env）
+./run.sh start -p 5175                         # 自定义前端服务内部端口为 5175
+./run.sh start -p 5173 -u superadmin -P Pass123 # 自定义端口与超级管理员账密启动
+./run.sh restart -p 5175                       # 重启并变更为 5175 端口
+
+# 3. 查看服务运行状态与端口占用
 ./run.sh status
 
-# 3. 重启前后端服务
+# 4. 重启前后端服务（重启前自动清理垃圾与缓存）
 ./run.sh restart
 
-# 4. 彻底停止前后端服务
+# 5. 彻底停止前后端服务并释放端口
 ./run.sh stop
 
-# 5. 查看帮助
+# 6. 生成基于 SNI 443 端口的 Nginx SSL 反向代理配置
+./run.sh add_nginx
+./run.sh add_nginx -d mengya.myhost.com        # 自定义 SNI 域名反代配置
+
+# 7. 查看完整帮助信息与可用选项
 ./run.sh help
 ```
+
+### 常用命令行自定义参数选项
+| 选项 | 长参数 | 默认值 | 作用说明 |
+|---|---|---|---|
+| `-p` | `--port` | `5173` | 自定义前端内部运行端口（自动持久化写入 `.env` 的 `FRONTEND_PORT`） |
+| `-u` | `--admin` | `admin` | 自定义超级管理员账号/手机号（自动持久化写入 `.env` 的 `ADMIN_USERNAME` 与 `ADMIN_PHONE`） |
+| `-P` | `--password` | `admin123` | 自定义超级管理员登录密码（自动持久化写入 `.env` 的 `ADMIN_PASSWORD`） |
+| `-n` | `--nickname` | `管理员` | 自定义超级管理员前台展示称谓（自动持久化写入 `.env` 的 `ADMIN_NICKNAME`） |
+| `-d` | `--domain` | `mengya.local localhost` | 自定义 Nginx 反代 SNI 域名（自动持久化写入 `.env` 的 `SERVER_NAME`） |
+
+### 环境配置自动自愈加固
+- **配置环境自动自愈**：`run.sh` 启动前检测若无 `.env` 文件，自动从 `.env.example` 模版克隆初始化，避免因配置文件缺失导致环境变量无法解析。
 
 启动完成后，打开浏览器访问：[http://localhost:5173/](http://localhost:5173/)
 
