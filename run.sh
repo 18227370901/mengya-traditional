@@ -65,6 +65,23 @@ update_env_var() {
         fi
     fi
 }
+# 智能规范化路径为绝对物理路径（避免相对路径导致 Nginx 基于 Prefix 错误寻址）
+resolve_abs_path() {
+    local target="$1"
+    if [ -z "$target" ]; then
+        echo ""
+        return
+    fi
+    if [[ "$target" == /* ]] || [[ "$target" =~ ^[A-Za-z]: ]]; then
+        echo "$target"
+    else
+        mkdir -p "$SCRIPT_DIR/$target" 2>/dev/null || true
+        local abs_dir
+        abs_dir="$(cd "$SCRIPT_DIR/$target" 2>/dev/null && pwd)"
+        echo "${abs_dir:-$SCRIPT_DIR/$target}"
+    fi
+}
+
 
 # 外部访问端口默认统一为 443
 PORT="${PORT:-${EXTERNAL_PORT:-443}}"
@@ -79,8 +96,8 @@ ADMIN_USERNAME="${ADMIN_USERNAME:-${ADMIN_PHONE:-admin}}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin123}"
 ADMIN_NICKNAME="${ADMIN_NICKNAME:-管理员}"
 
-NGINX_CONF_DIR="${NGINX_CONF_DIR:-/opt/service/nginx/conf.d}"
-NGINX_CERT_DIR="${NGINX_CERT_DIR:-/opt/service/nginx/ssl}"
+NGINX_CONF_DIR=$(resolve_abs_path "${NGINX_CONF_DIR:-/opt/service/nginx/conf.d}")
+NGINX_CERT_DIR=$(resolve_abs_path "${NGINX_CERT_DIR:-/opt/service/nginx/ssl}")
 NGINX_CONF="$NGINX_CONF_DIR/mengya_ssl.conf"
 ENABLE_HTTP_REDIRECT="${ENABLE_HTTP_REDIRECT:-1}"
 
@@ -325,28 +342,44 @@ start_frontend() {
 # ===== 生成 Nginx SNI 443 SSL 反向代理配置 =====
 gen_nginx_config() {
     echo "==> 生成 Nginx SSL (SNI 443) 反向代理配置"
+
+    # 确保证书目录与配置目录均为物理绝对路径（彻底避免相对路径导致 Nginx 寻址失败）
+    NGINX_CONF_DIR=$(resolve_abs_path "$NGINX_CONF_DIR")
+    NGINX_CERT_DIR=$(resolve_abs_path "$NGINX_CERT_DIR")
+    NGINX_CONF="$NGINX_CONF_DIR/mengya_ssl.conf"
+
     mkdir -p "$NGINX_CONF_DIR" "$NGINX_CERT_DIR"
 
-    local PRIMARY_DOMAIN
-    PRIMARY_DOMAIN=$(echo "$SERVER_NAME" | awk '{print $1}')
-    [ -z "$PRIMARY_DOMAIN" ] && PRIMARY_DOMAIN="localhost"
+    # 主域名用于 OpenSSL 证书 CN 与控制台访问链接展示（以 SERVER_NAME 配置为准）
+    local MAIN_DOMAIN
+    MAIN_DOMAIN=$(echo "$SERVER_NAME" | awk '{print $1}')
+    [ -z "$MAIN_DOMAIN" ] && MAIN_DOMAIN="localhost"
 
-    if [ ! -f "$NGINX_CERT_DIR/mengya.crt" ]; then
-        echo "  生成自签名 SSL 证书（SNI 域名: $PRIMARY_DOMAIN）..."
+    # 动态构建 OpenSSL SAN 扩展列表（遍历覆盖 SERVER_NAME 中声明的所有域名）
+    local SAN_LIST="DNS:localhost,IP:127.0.0.1"
+    for d in $SERVER_NAME; do
+        SAN_LIST="$SAN_LIST,DNS:$d"
+    done
+
+    local CERT_FILE="$NGINX_CERT_DIR/mengya.crt"
+    local KEY_FILE="$NGINX_CERT_DIR/mengya.key"
+
+    if [ ! -f "$CERT_FILE" ]; then
+        echo "  生成自签名 SSL 证书（主域名: $MAIN_DOMAIN，SAN: $SAN_LIST）..."
         if command -v openssl >/dev/null 2>&1; then
-            openssl req -x509 -newkey rsa:2048 -keyout "$NGINX_CERT_DIR/mengya.key" \
-                -out "$NGINX_CERT_DIR/mengya.crt" -days 365 -nodes \
-                -subj "/C=CN/O=mengya/CN=$PRIMARY_DOMAIN" \
-                -addext "subjectAltName=DNS:$PRIMARY_DOMAIN,DNS:localhost,IP:127.0.0.1" 2>/dev/null || \
-            openssl req -x509 -newkey rsa:2048 -keyout "$NGINX_CERT_DIR/mengya.key" \
-                -out "$NGINX_CERT_DIR/mengya.crt" -days 365 -nodes \
-                -subj "/C=CN/O=mengya/CN=$PRIMARY_DOMAIN" 2>/dev/null || true
-            echo "  证书已生成: $NGINX_CERT_DIR/mengya.crt"
+            openssl req -x509 -newkey rsa:2048 -keyout "$KEY_FILE" \
+                -out "$CERT_FILE" -days 365 -nodes \
+                -subj "/C=CN/O=mengya/CN=$MAIN_DOMAIN" \
+                -addext "subjectAltName=$SAN_LIST" 2>/dev/null || \
+            openssl req -x509 -newkey rsa:2048 -keyout "$KEY_FILE" \
+                -out "$CERT_FILE" -days 365 -nodes \
+                -subj "/C=CN/O=mengya/CN=$MAIN_DOMAIN" 2>/dev/null || true
+            echo "  证书已生成: $CERT_FILE"
         else
             echo "  [警告] 未找到 openssl，跳过证书生成，请手动放置证书至 $NGINX_CERT_DIR/"
         fi
     else
-        echo "  已存在 SSL 证书: $NGINX_CERT_DIR/mengya.crt（跳过重新生成）"
+        echo "  已存在 SSL 证书: $CERT_FILE（跳过重新生成）"
     fi
 
     local REDIRECT_BLOCK=""
@@ -366,7 +399,9 @@ server {
     cat > "$NGINX_CONF" << EOF
 # ============================================================
 # 萌芽（mengya）平台 - Nginx HTTPS (SNI 443) 反向代理配置
+# 配置文件：$NGINX_CONF
 # 访问端口：$EXTERNAL_PORT (HTTPS 标准端口)
+# 匹配域名：$SERVER_NAME (以 SERVER_NAME 配置为准)
 # SNI 特性：基于 server_name 匹配 TLS 握手域名，支持多站点共用 443 端口
 # 自动生成时间: $(date '+%Y-%m-%d %H:%M:%S')
 # ============================================================
@@ -376,9 +411,9 @@ server {
     listen [::]:$EXTERNAL_PORT ssl;
     server_name $SERVER_NAME;
 
-    # SSL 证书与私钥（基于 SNI 匹配独立绑定）
-    ssl_certificate     $NGINX_CERT_DIR/mengya.crt;
-    ssl_certificate_key $NGINX_CERT_DIR/mengya.key;
+    # SSL 证书与私钥（基于物理绝对路径，保障 Nginx 稳定加载）
+    ssl_certificate     $CERT_FILE;
+    ssl_certificate_key $KEY_FILE;
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_ciphers         ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
     ssl_prefer_server_ciphers off;
@@ -436,9 +471,9 @@ server {
 EOF
 
     echo "  Nginx 配置文件已生成: $NGINX_CONF"
-    echo "  SSL 证书目录: $NGINX_CERT_DIR"
-    echo "  SNI 监听域名: $SERVER_NAME"
-    echo "  外部访问端口: $EXTERNAL_PORT"
+    echo "  SSL 证书路径:         $CERT_FILE"
+    echo "  SNI 监听域名:         $SERVER_NAME (以 SERVER_NAME 为准，主域名: $MAIN_DOMAIN)"
+    echo "  外部访问端口:         $EXTERNAL_PORT"
     echo ""
     echo "  启用配置请执行:"
     echo "    1. 确保 nginx.conf 已包含: include $NGINX_CONF_DIR/*.conf;"
@@ -526,13 +561,13 @@ show_status() {
     echo "  前端 Vite    : $([ -n "$fp" ] && echo "运行中 (PID $fp, 回环端口 $FRONTEND_PORT)" || (port_in_use "$FRONTEND_PORT" && echo "端口占用 (外部进程)" || echo "未运行"))"
     echo "  Nginx SNI    : $([ -f "$NGINX_CONF" ] && echo "已配置 ($NGINX_CONF)" || echo "未生成 (执行 ./run.sh add_nginx 生成)")"
     echo "  外部访问端口 : $EXTERNAL_PORT (SNI 域名: $SERVER_NAME)"
-    local PRIMARY_DOMAIN
-    PRIMARY_DOMAIN=$(echo "$SERVER_NAME" | awk '{print $1}')
-    [ -z "$PRIMARY_DOMAIN" ] && PRIMARY_DOMAIN="localhost"
+    local MAIN_DOMAIN
+    MAIN_DOMAIN=$(echo "$SERVER_NAME" | awk '{print $1}')
+    [ -z "$MAIN_DOMAIN" ] && MAIN_DOMAIN="localhost"
     if [ "$EXTERNAL_PORT" = "443" ]; then
-        echo "  统一访问入口 : https://$PRIMARY_DOMAIN/ (HTTPS SNI 443)"
+        echo "  统一访问入口 : https://$MAIN_DOMAIN/ (HTTPS SNI 443)"
     else
-        echo "  统一访问入口 : https://$PRIMARY_DOMAIN:$EXTERNAL_PORT/ (HTTPS SNI)"
+        echo "  统一访问入口 : https://$MAIN_DOMAIN:$EXTERNAL_PORT/ (HTTPS SNI)"
     fi
     echo "  架构安全设计 : 前后端绑定 127.0.0.1 保护中，全站流量走 443 统一反代"
     echo "  日志目录     : $LOG_DIR"

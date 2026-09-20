@@ -1534,3 +1534,21 @@ MODE 环境变量已设置 → 直接使用（校验取值）
   - **3. 本地传统进程生命周期与安全保护**：
     - 前端 Vite 绑定 `127.0.0.1:$FRONTEND_PORT`，后端 Django 绑定 `127.0.0.1:$BACKEND_PORT`，全站严格处于本地回环保护模式中，外部访问由 Nginx 443 SNI 唯一安全网关承载。
     - 启动时自动触发 `ensure_admin` 保障单一管理员机制，并在启停前自动调用 `cleanup_cache()` 深度清理 `.git` 垃圾对象与 Python 缓存，实现高稳定性运行。
+
+### 12.22 Nginx 反代路径智能绝对化与多域名 SAN 证书权威重构 (REQ-22)
+- **需求背景与痛点**：
+  - 用户在审查传统部署版 `run.sh` 脚本的 `add_nginx` 功能时提出两项关键疑问与隐患：
+    1. **域名参数权威性存疑**：脚本中同时存在 `SERVER_NAME` 与 `PRIMARY_DOMAIN`，用户质疑自定义 SNI 域名是否真正生效，以及到底以哪个参数为准。
+    2. **相对证书路径导致 Nginx 加载崩溃**：当配置 `NGINX_CERT_DIR="${NGINX_CERT_DIR:-./nginx/ssl}"` 时，生成的 Nginx 配置文件中证书路径为相对路径：
+       `ssl_certificate ./nginx/ssl/mengya.crt;`
+       `ssl_certificate_key ./nginx/ssl/mengya.key;`
+       Nginx 在解析相对路径证书时，依据规范是基于自身 Prefix 目录（通常为 `/etc/nginx`）寻址，导致报致命错误 `cannot load certificate "./nginx/ssl/...": No such file or directory`。
+- **架构升级与实施明细**：
+  - **1. 域名配置权威性收敛（以 `SERVER_NAME` 为唯一权威）**：
+    - 明确 `SERVER_NAME` 为唯一用户配置项（通过命令行 `-d / --domain` 或 `.env` 设定），直接完整注入 Nginx 配置中的 `server_name $SERVER_NAME;`。
+    - 将 `PRIMARY_DOMAIN` 重构为内部派生变量 `MAIN_DOMAIN`（仅提取 `SERVER_NAME` 的首个域名），严格用于规避 OpenSSL 证书主题 CN 不能包含空格的规范限制，并用于终端输出合法的单一可点击链接。
+    - **多域名 SAN 全量遍历支持**：动态遍历 `SERVER_NAME` 中声明的全部域名，自动拼接为 `subjectAltName` 扩展列表（`DNS:localhost,IP:127.0.0.1,DNS:domain1,DNS:domain2...`），彻底解决多域名访问时浏览器报证书不匹配的痛点。
+  - **2. 路径智能绝对化规范（`resolve_abs_path`）**：
+    - 编写 `resolve_abs_path()` 工具函数：检测到输入路径为相对路径时（如 `./nginx/ssl` 或 `nginx/ssl`），自动基于项目根目录 `$SCRIPT_DIR` 转换为系统的物理绝对路径并确保目录存在；若已是绝对路径则安全保留。
+    - 在生成 Nginx 配置时，写入的证书路径一律为规范绝对路径（如 `/path/to/mengya-local/nginx/ssl/mengya.crt`）。
+    - 无论用户配置绝对路径还是相对路径，Nginx 服务无论何时从何工作目录下重载均能稳定读取证书。
