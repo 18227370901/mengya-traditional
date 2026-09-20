@@ -1572,3 +1572,16 @@ MODE 环境变量已设置 → 直接使用（校验取值）
 - **验证与效果**：
   - 脚本通过 `bash -n` 静态语法校验。
   - 用户执行 `./run.sh start` 或 `restart` 启动时自动打通 Nginx 443 SNI 反代闭环，同时具备可靠的证书防覆盖安全保护。
+
+### 12.24 POSIX 标准兼容与 sh 启动无缝自愈重入改造 (REQ-24-POSIX)
+- **用户诉求与需求背景**：
+  - 用户在 Linux 环境使用 `sh run.sh status` 调用脚本时，因系统默认 `/bin/sh -> /bin/dash` 导致 `${BASH_SOURCE[0]}`、`[[ ... ]]` 与 `EXTRA_ARGS=()` 引发 `Bad substitution`、`[[: not found` 与 `Syntax error` 语法崩溃。
+- **排查与重构设计（双保险策略）**：
+  1. **顶层自适应重入**：若当前非 Bash 且系统存在 bash，自动 `exec bash "$0" "$@"`。
+  2. **语法底层 POSIX 标准化**：
+     - 脚本路径采用 `"${BASH_SOURCE:-$0}"`；
+     - 路径绝对化使用 POSIX 原生 `case "$target" in /*|[A-Za-z]:*)`；
+     - 变长参数收集改用通用字符串累加；
+     - 交互式提示使用 `printf` + `read`。
+- **验证与效果**：
+  - 传统版管理脚本全面通过 `bash -n` 校验，支持任意 Shell 调用方式。
