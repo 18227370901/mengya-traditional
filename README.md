@@ -55,7 +55,11 @@
 ./run.sh add_nginx
 ./run.sh add_nginx -d mengya.myhost.com        # 自定义 SNI 域名反代配置
 
-# 7. 查看完整帮助信息与可用选项
+# 7. 检查并补齐全量样例数据（孕期周历/胎教故事/孕期食谱/幼儿百科/待产清单/商品/品牌）
+./run.sh init_data
+./run.sh init_data --force                     # 强制全量覆盖重建所有样例数据
+
+# 8. 查看完整帮助信息与可用选项
 ./run.sh help
 ```
 

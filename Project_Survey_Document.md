@@ -1585,3 +1585,46 @@ MODE 环境变量已设置 → 直接使用（校验取值）
      - 交互式提示使用 `printf` + `read`。
 - **验证与效果**：
   - 传统版管理脚本全面通过 `bash -n` 校验，支持任意 Shell 调用方式。
+
+### 12.25 全模块业务样例数据自愈入库与重启会话强制下线机制 (REQ-25-SAMPLE-LOGOUT)
+- **需求背景与业务痛点**：
+  - 用户在运行传统部署版时，排查发现两大问题：
+    1. **页面业务样例数据大面积缺失**：前台访问「孕期周历」、「睡前胎教故事」、「孕期营养食谱」、「幼儿百科」等功能页面时，发现页面内容为空，未呈现应有的完整开箱业务数据。
+    2. **服务重启后在线用户未被强制下线**：执行 `./run.sh restart` 重启本地前后端服务后，先前已登录的前台客户端刷新页面依然保持登录状态，未能触发会话注销与强制下线重登。
+- **排查与根因定位**：
+  - **1. 样例数据缺失根因**：
+    - `apps/core/management/commands/init_data.py` 原为旧版硬编码脚本，仅简单创建了少量品牌和商品，完全未编写食谱（Recipe）、胎教故事（FetalStory）、幼儿百科（KidsEncyclopedia）、待产清单（BabyShoppingItem）及 40 周全量周历（TimelineEvent）的数据导入逻辑；
+    - 仓库中已内置 2.5MB 脱敏基础数据包 `apps/core/fixtures/initial_data.json`（共 971 条数据），但旧版未加以解析导入；
+    - 数据库字段长度瓶颈：`BrandProfile.logo` 与 `Product.image_url` 在模型中原为 `models.URLField`（默认限长 200 字符），而样例数据中真实 SVG/图片 URL 最长达 666 字符，直接灌入会触发字段超长异常。
+  - **2. 重启未强制下线根因**：
+    - 平台采用 JWT 认证，令牌本身无状态；服务重启前后端的秘钥与数据库均未变动，客户端保存在 localStorage 的 Token 仍处于合法有效期；
+    - 传统版此前缺少 `invalidate_tokens` 会话失效管理命令，且 `run.sh restart` 中未调用任何会话重置逻辑；
+    - `single_session_auth.py` 中单终端鉴权未对重启标记或缺失 JTI 进行严格阻断，且注册接口 `register` 未写入初始 JTI。
+- **实施方案与架构优化**：
+  - **1. 数据库模型升级与迁移 (0023)**：
+    - 将 `BrandProfile.logo` 与 `Product.image_url` 升级为 `models.TextField`，消除长度截断隐患；
+    - 引入并应用迁移文件 `0023_alter_brandprofile_logo_alter_product_image_url.py`。
+  - **2. 全模块细粒度自愈与幂等初始化引擎 (`init_data.py`)**：
+    - 全面重构 `apps/core/management/commands/init_data.py`，直接解析 `initial_data.json` 种子包；
+    - 实现全模块按需幂等自愈（支持 `--skip-if-exists` 与 `--force`）：
+      - **品牌档案 (`BrandProfile`)**：41 条；
+      - **推荐商品 (`Product`)**：63 款；
+      - **孕期周历 (`TimelineEvent`)**：204 条（涵盖 40 周全周期每日发育、产检与注意事项）；
+      - **睡前胎教故事 (`FetalStory`)**：245 篇（涵盖孕 17-40 周双语伴读）；
+      - **孕期营养食谱 (`Recipe`)**：288 道（涵盖早/中/晚孕期营养膳食）；
+      - **幼儿百科问答 (`KidsEncyclopedia`)**：57 篇（涵盖四大育儿科学篇章）；
+      - **待产母婴清单 (`BabyShoppingItem`)**：69 项（涵盖妈妈包与宝宝包）；
+      - **系统设置与演示家庭**：开箱即用；
+    - 自动适配重置底层数据库主键自增序列。
+  - **3. 服务重启全量会话注销与强制下线机制**：
+    - 新增管理命令 `apps/core/management/commands/invalidate_tokens.py`，批量将活跃用户 `active_token_jti` 更新为 `revoked_restart_<uuid>`；
+    - 强化 `SingleSessionJWTAuthentication`：当用户的 `active_token_jti` 为空或与当前 Token JTI 不一致时，强制抛出 `ForceLogoutError`（HTTP 401，业务码 1003）；
+    - 完善 `views.py` 注册接口，注册时同步写入 `active_token_jti`；
+    - 前端登录页将提示优化为“您的账号已在其他设备登录或服务已重启，请重新登录”；
+    - 在 `run.sh restart` 流程中前置调用 `manage.py invalidate_tokens`，重启后客户端下次请求即刻被强制下线并跳转至登录页。
+  - **4. 运维脚本新增独立管理命令**：
+    - 在 `run.sh` 中新增 `./run.sh init_data` / `./run.sh seed` 命令，支持运维随时检查并补齐全量样例数据。
+- **验证与效果**：
+  - 脚本与代码语法校验通过；
+  - 孕期周历、食谱、胎教故事、幼儿百科等页面样例数据 100% 完整呈现；
+  - 执行 `./run.sh restart` 后，在线用户即刻被安全下线并跳转至登录页。

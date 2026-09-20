@@ -297,9 +297,8 @@ start_backend() {
     cd "$BACKEND_DIR"
     echo "  执行数据迁移..."
     "$PYTHON" manage.py migrate --noinput
-    echo "  初始化种子数据..."
+    echo "  初始化种子数据（孕期周历/胎教故事/孕期食谱/幼儿百科/商品品牌/待产清单）..."
     "$PYTHON" manage.py init_data --skip-if-exists
-    "$PYTHON" manage.py init_fetal_stories --skip-if-exists
 
     echo "  同步单一管理员账号 ($ADMIN_USERNAME)..."
     ADMIN_USERNAME="$ADMIN_USERNAME" \
@@ -630,6 +629,21 @@ show_status() {
     echo "============================================"
 }
 
+init_data_local() {
+    local PY_CMD
+    PY_CMD=$(detect_python)
+    if [ -z "$PY_CMD" ]; then
+        echo "  [错误] 未找到 python3 或 python，请先安装 Python 3.10+"
+        return 1
+    fi
+    local PYTHON
+    PYTHON=$(ensure_backend_deps "$PY_CMD")
+    cd "$BACKEND_DIR"
+    echo "==> 正在执行全量样例数据检查与补充初始化..."
+    "$PYTHON" manage.py init_data "$@"
+    cd "$SCRIPT_DIR"
+}
+
 # 解析命令行参数与自定义变量
 CMD=""
 CUSTOM_PORT=""
@@ -641,7 +655,7 @@ EXTRA_ARGS=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        start|stop|restart|status|add_nginx|help)
+        start|stop|restart|status|add_nginx|init_data|seed|help)
             if [ -z "$CMD" ]; then
                 CMD="$1"
             else
@@ -757,6 +771,17 @@ case "$CMD" in
         stop_all
         sleep 1
         cleanup_cache
+        # 会话强制注销，强制所有历史登录用户下线重新登录
+        local PY_CMD
+        PY_CMD=$(detect_python)
+        if [ -n "$PY_CMD" ]; then
+            local PYTHON
+            PYTHON=$(ensure_backend_deps "$PY_CMD")
+            cd "$BACKEND_DIR"
+            echo "  [会话安全] 正在执行会话强制注销，所有在线用户下线重新登录..."
+            "$PYTHON" manage.py invalidate_tokens 2>/dev/null || true
+            cd "$SCRIPT_DIR"
+        fi
         # 补全主流程中缺失的 SSL 证书与 Nginx 配置创建函数调用
         gen_ssl_cert
         gen_nginx_config
@@ -781,6 +806,9 @@ case "$CMD" in
     status)
         show_status
         ;;
+    init_data|seed)
+        init_data_local $EXTRA_ARGS
+        ;;
     help)
         echo ""
         echo "萌芽（mengya-local）本地模式管理命令："
@@ -789,6 +817,7 @@ case "$CMD" in
         echo "  ./run.sh restart [选项]      重启本地前后端服务（重启前自动清理垃圾与缓存）"
         echo "  ./run.sh status              查看运行状态与端口占用"
         echo "  ./run.sh add_nginx [选项]    生成基于 SNI 443 端口的 Nginx SSL 反向代理配置"
+        echo "  ./run.sh init_data [选项]    检查并补齐全量样例数据（食谱/胎教/百科/周历/清单/商品/品牌）"
         echo "  ./run.sh help                查看帮助"
         echo ""
         echo "常用自定义选项（支持在 start / restart / add_nginx 时追加，自动持久化至 .env）："
@@ -808,7 +837,7 @@ case "$CMD" in
         ;;
     *)
         echo "未知命令: $CMD"
-        echo "支持的子命令: start | stop | restart | status | add_nginx | help"
+        echo "支持的子命令: start | stop | restart | status | add_nginx | init_data | help"
         exit 1
         ;;
 esac
