@@ -119,6 +119,8 @@ function Start-BackendService {
 
     $venvPy = Join-Path $SCRIPT_DIR '.venv\Scripts\python.exe'
     $pyCmd = if (Test-Path -LiteralPath $venvPy) { $venvPy } else { 'python' }
+    $env:PYTHONIOENCODING = 'utf-8'
+    $env:PYTHONUTF8 = '1'
 
     Push-Location $SCRIPT_DIR
     try {
