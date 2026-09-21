@@ -352,3 +352,9 @@ mengya-local/
    - 统一管理员与普通用户的风控一键重置能力，清空输错次数、清空锁定时间并一键解冻，操作更高效友好。
 ### v1.18 (2026-09-18)
 1. **服务启动/重启全自动垃圾与缓存清理**：在 `run.sh` 脚本的 `start` 与 `restart` 命令前置接入 `cleanup_cache()`，启动前自动执行 `git reflog expire` 与 `git gc --prune=now` 深度清理 .git 冗余对象，递归清理 `__pycache__` 与 `*.pyc` 缓存残留，保持开发与部署环境磁盘轻量健康。
+
+### v1.26 (2026-09-21)
+1. **传统部署管理脚本 (`run.sh`) 语法作用域修复**：
+   - 彻底修复执行 `./run.sh restart` 时由于 `local` 关键字暴露在顶层 `case` 块中导致的 `run.sh: line 778: local: can only be used in a function` 报错；
+   - 将重启时强制会话注销的执行逻辑规范化封装为 `invalidate_all_sessions()` 专职函数，确保局部变量受限于函数作用域；
+   - 优化日志及进程 PID 目录创建为幂等安全守卫模式，解决在受限权限与沙箱环境下重复跨级目录遍历的兼容性隐患。

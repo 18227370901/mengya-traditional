@@ -124,7 +124,8 @@ PID_DIR="$SCRIPT_DIR/logs"
 BACKEND_PID_FILE="$PID_DIR/backend.pid"
 FRONTEND_PID_FILE="$PID_DIR/frontend.pid"
 
-mkdir -p "$LOG_DIR" "$PID_DIR"
+[ -d "$LOG_DIR" ] || mkdir -p "$LOG_DIR"
+[ -d "$PID_DIR" ] || mkdir -p "$PID_DIR"
 
 port_in_use() {
     local port="$1"
@@ -274,6 +275,19 @@ cleanup_cache() {
     find "$SCRIPT_DIR" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
     find "$SCRIPT_DIR" -type f -name "*.pyc" -delete 2>/dev/null || true
     rm -rf /tmp/gift-backup 2>/dev/null || true
+}
+
+invalidate_all_sessions() {
+    local PY_CMD
+    PY_CMD=$(detect_python)
+    if [ -n "$PY_CMD" ]; then
+        local PYTHON
+        PYTHON=$(ensure_backend_deps "$PY_CMD")
+        cd "$BACKEND_DIR"
+        echo "  [会话安全] 正在执行会话强制注销，所有在线用户下线重新登录..."
+        "$PYTHON" manage.py invalidate_tokens 2>/dev/null || true
+        cd "$SCRIPT_DIR"
+    fi
 }
 
 start_backend() {
@@ -772,16 +786,7 @@ case "$CMD" in
         sleep 1
         cleanup_cache
         # 会话强制注销，强制所有历史登录用户下线重新登录
-        local PY_CMD
-        PY_CMD=$(detect_python)
-        if [ -n "$PY_CMD" ]; then
-            local PYTHON
-            PYTHON=$(ensure_backend_deps "$PY_CMD")
-            cd "$BACKEND_DIR"
-            echo "  [会话安全] 正在执行会话强制注销，所有在线用户下线重新登录..."
-            "$PYTHON" manage.py invalidate_tokens 2>/dev/null || true
-            cd "$SCRIPT_DIR"
-        fi
+        invalidate_all_sessions
         # 补全主流程中缺失的 SSL 证书与 Nginx 配置创建函数调用
         gen_ssl_cert
         gen_nginx_config

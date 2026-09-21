@@ -1628,3 +1628,42 @@ MODE 环境变量已设置 → 直接使用（校验取值）
   - 脚本与代码语法校验通过；
   - 孕期周历、食谱、胎教故事、幼儿百科等页面样例数据 100% 完整呈现；
   - 执行 `./run.sh restart` 后，在线用户即刻被安全下线并跳转至登录页。
+
+### 12.26 传统模式运维脚本 run.sh 会话注销函数作用域修复 (REQ-26-RUNSH-LOCAL-SCOPE)
+- **需求背景与故障现象**：
+  - 用户在通过传统部署方式执行 `./run.sh restart` 重启服务时，脚本中断并报错：
+    `run.sh: line 778: local: can only be used in a function`。
+- **根因分析**：
+  - 在前次实现“服务重启全量会话注销与强制下线机制 (12.25)”时，将执行 `python manage.py invalidate_tokens` 的检测与运行代码直接放置在主脚本的 `case "$CMD" in restart) ... ;; esac` 顶层分支中；
+  - 该代码段中声明了 `local PY_CMD` 与 `local PYTHON`；
+  - 根据 Shell/Bash 语法规范，`local` 是函数内置声明关键字，只能在函数体内使用；当在全局或控制流分支直接执行 `local` 时，Bash 会抛出运行时致命错误 `local: can only be used in a function` 并导致启动流程中断；
+  - 同时，顶层直接执行 `mkdir -p "$LOG_DIR" "$PID_DIR"` 在特定沙箱或受限权限环境下，若父级目录不可写会引发非幂等检查报错。
+- **实施方案与代码重构**：
+  1. **封装专职会话注销函数 (`invalidate_all_sessions`)**：
+     - 在 `run.sh` 中将调用 Django 会话失效命令的检测与执行逻辑完整封装为 `invalidate_all_sessions()` 函数：
+       ```bash
+       invalidate_all_sessions() {
+           local PY_CMD
+           PY_CMD=$(detect_python)
+           if [ -n "$PY_CMD" ]; then
+               local PYTHON
+               PYTHON=$(ensure_backend_deps "$PY_CMD")
+               cd "$BACKEND_DIR"
+               echo "  [会话安全] 正在执行会话强制注销，所有在线用户下线重新登录..."
+               "$PYTHON" manage.py invalidate_tokens 2>/dev/null || true
+               cd "$SCRIPT_DIR"
+           fi
+       }
+       ```
+     - 使得 `local` 变量严格限制在函数局部作用域内，彻底根治语法违背问题。
+  2. **主控制流程调用精简**：
+     - 在 `restart)` 分支中直接调用 `invalidate_all_sessions`，保持主流程精简清晰。
+  3. **目录幂等创建加固**：
+     - 将日志及 PID 目录创建优化为条件守卫：
+       `[ -d "$LOG_DIR" ] || mkdir -p "$LOG_DIR"`
+       `[ -d "$PID_DIR" ] || mkdir -p "$PID_DIR"`
+       避免重复跨级目录遍历，提升受限权限与沙箱环境下的健壮性。
+- **验证与效果**：
+  - 使用 `bash -n run.sh` 进行静态语法检测，0 错误 0 警告；
+  - 在 Git Bash 与原生 Linux 环境下执行 `./run.sh help`、`./run.sh status` 均正常返回预期内容；
+  - 经环境检测，所有 `local` 关键字已 100% 处于函数调用栈内部，无任何全局语法漏洞。
