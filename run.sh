@@ -3,9 +3,9 @@
 # 萌芽（mengya）平台 - 本地传统模式管理脚本 (mengya-local)
 #
 # 架构模型：
-#   - 外部访问：Nginx 统一反代，监听 0.0.0.0:443（HTTPS SNI 唯一安全入口）
-#   - 前端服务：Vite 开发服务器，绑定 127.0.0.1:5173（本地回环保护）
-#   - 后端服务：Django 框架，绑定 127.0.0.1:8000（本地回环保护，禁止外部直连）
+#   - 外部访问：直连 FRONTEND_PORT（默认 5173），或通过 Nginx 统一反代（HTTPS SNI 443 唯一安全入口）
+#   - 服务模型：Django 单体一体化服务，监听 0.0.0.0:$FRONTEND_PORT（统一托管前端 SPA 页面、静态资源与后端 API）
+#   - 前端架构：前端生产静态产物已合并入 Django (templates/ & static/)，彻底移除 Node.js 常驻运行时，解决内存高占用
 #   - 数据库：本地 SQLite (db.sqlite3)，轻量独立
 #
 # 支持命令：
@@ -99,9 +99,9 @@ PORT="${PORT:-${EXTERNAL_PORT:-443}}"
 EXTERNAL_PORT="$PORT"
 SERVER_NAME="${SERVER_NAME:-${DOMAIN:-mengya.local localhost}}"
 
-# 内部服务端口（仅监听 127.0.0.1 本地回环）
-BACKEND_PORT="${BACKEND_PORT:-8000}"
+# 一体化服务访问端口（默认 5173）
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
+BACKEND_PORT="${FRONTEND_PORT}"
 
 ADMIN_USERNAME="${ADMIN_USERNAME:-${ADMIN_PHONE:-admin}}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin123}"
@@ -291,9 +291,9 @@ invalidate_all_sessions() {
 }
 
 start_backend() {
-    echo "==> 启动后端服务（端口 $BACKEND_PORT，本地回环保护模式）"
-    if port_in_use "$BACKEND_PORT"; then
-        echo "  [提示] 端口 $BACKEND_PORT 已被占用，跳过后端启动。"
+    echo "==> 启动 Django 一体化服务（端口 $FRONTEND_PORT，托管前端静态与后端 API）"
+    if port_in_use "$FRONTEND_PORT"; then
+        echo "  [提示] 端口 $FRONTEND_PORT 已被占用，跳过服务启动。"
         echo "         如需重新启动，请先执行 ./run.sh stop"
         return 0
     fi
@@ -320,47 +320,23 @@ start_backend() {
     ADMIN_NICKNAME="$ADMIN_NICKNAME" \
     "$PYTHON" manage.py ensure_admin
 
-    # 绑定 127.0.0.1 回环地址：仅允许本机反代访问，禁止外部直接连 8000
-    nohup "$PYTHON" manage.py runserver 127.0.0.1:"$BACKEND_PORT" \
+    # 监听 0.0.0.0:$FRONTEND_PORT：允许本地直连与 Nginx 反向代理
+    nohup "$PYTHON" manage.py runserver 0.0.0.0:"$FRONTEND_PORT" \
         >> "$LOG_DIR/backend.log" 2>&1 &
     echo $! > "$BACKEND_PID_FILE"
-    echo "  后端 PID: $(cat "$BACKEND_PID_FILE")"
+    echo "  服务 PID: $(cat "$BACKEND_PID_FILE")"
     echo "  日志: $LOG_DIR/backend.log"
     cd "$SCRIPT_DIR"
 }
 
 ensure_frontend_deps() {
-    echo "  ==> 检查前端依赖..."
-    cd "$FRONTEND_DIR"
-    if [ ! -d "node_modules" ]; then
-        echo "  [依赖] 未找到 node_modules，执行 npm install..."
-        npm install
-    fi
+    return 0
 }
 
 start_frontend() {
-    echo "==> 启动前端服务（内部端口 $FRONTEND_PORT，本地回环保护模式）"
-    if port_in_use "$FRONTEND_PORT"; then
-        echo "  [提示] 内部端口 $FRONTEND_PORT 已被占用，跳过前端启动。"
-        return 0
-    fi
-
-    ensure_frontend_deps
-
-    cd "$FRONTEND_DIR"
-    local VITE_BIN="./node_modules/.bin/vite"
-    # 绑定 127.0.0.1 回环保护，外部流量必须经过 Nginx 443 反代
-    if [ -f "$VITE_BIN" ]; then
-        nohup "$VITE_BIN" --port "$FRONTEND_PORT" --host 127.0.0.1 \
-            >> "$LOG_DIR/frontend.log" 2>&1 &
-    else
-        nohup npm run dev -- --port "$FRONTEND_PORT" --host 127.0.0.1 \
-            >> "$LOG_DIR/frontend.log" 2>&1 &
-    fi
-    echo $! > "$FRONTEND_PID_FILE"
-    echo "  前端 PID: $(cat "$FRONTEND_PID_FILE")"
-    echo "  日志: $LOG_DIR/frontend.log"
-    cd "$SCRIPT_DIR"
+    # 前端静态产物已合并至 Django (templates/ & static/)
+    # 彻底消除 Node.js / Vite 进程常驻与高内存占用
+    return 0
 }
 
 # ===== 生成 Nginx SNI 443 SSL 反向代理配置 =====
@@ -497,38 +473,9 @@ server {
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
     # 文件上传限制（支持孕检报告、商品素材等大文件上传）
-    client_max_body_size 20M;
-
-    # 前端 Vite 代理（支持 SPA 路由与 WebSocket HMR）
+    client_max_body_size 20M;    # 一体化服务反向代理（统一托管前端静态页面、后端 API 与 Admin）
     location / {
         proxy_pass http://127.0.0.1:$FRONTEND_PORT;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header X-Forwarded-Port \$server_port;
-        proxy_set_header X-Forwarded-Host \$host;
-
-        # WebSocket 支持（Vite HMR 热重载）
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-
-    # 后端 Django API 反向代理
-    location /api/ {
-        proxy_pass http://127.0.0.1:$BACKEND_PORT;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header X-Forwarded-Port \$server_port;
-        proxy_set_header X-Forwarded-Host \$host;
-    }
-
-    # Django Admin 管理后台反向代理
-    location /admin/ {
-        proxy_pass http://127.0.0.1:$BACKEND_PORT;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -613,8 +560,8 @@ stop_service() {
 
 stop_all() {
     echo "==> 停止本地服务"
-    stop_service "$(get_backend_pid)" "后端 Django" "$BACKEND_PID_FILE" "$BACKEND_PORT" "manage.py runserver"
-    stop_service "$(get_frontend_pid)" "前端 Vite" "$FRONTEND_PID_FILE" "$FRONTEND_PORT" "vite"
+    stop_service "$(get_backend_pid)" "Django 一体化服务" "$BACKEND_PID_FILE" "$FRONTEND_PORT" "manage.py runserver"
+    rm -f "$FRONTEND_PID_FILE"
     echo "  本地服务停止操作完成"
 }
 
@@ -622,24 +569,24 @@ show_status() {
     echo "============================================"
     echo "  萌芽（mengya-local）运行状态"
     echo "============================================"
-    local bp fp
+    local bp
     bp=$(get_backend_pid)
-    fp=$(get_frontend_pid)
 
-    echo "  后端 Django  : $([ -n "$bp" ] && echo "运行中 (PID $bp, 回环端口 $BACKEND_PORT)" || (port_in_use "$BACKEND_PORT" && echo "端口占用 (外部进程)" || echo "未运行"))"
-    echo "  前端 Vite    : $([ -n "$fp" ] && echo "运行中 (PID $fp, 回环端口 $FRONTEND_PORT)" || (port_in_use "$FRONTEND_PORT" && echo "端口占用 (外部进程)" || echo "未运行"))"
-    echo "  Nginx SNI    : $([ -f "$NGINX_CONF" ] && echo "已配置 ($NGINX_CONF)" || echo "未生成 (执行 ./run.sh add_nginx 生成)")"
-    echo "  外部访问端口 : $EXTERNAL_PORT (SNI 域名: $SERVER_NAME)"
+    echo "  Django 一体化服务: $([ -n "$bp" ] && echo "运行中 (PID $bp, 端口 $FRONTEND_PORT)" || (port_in_use "$FRONTEND_PORT" && echo "端口占用 (外部进程)" || echo "未运行"))"
+    echo "  前端托管架构     : 前端生产静态产物已合并至 Django (templates/ & static/)，零 Node 进程"
+    echo "  Nginx SNI        : $([ -f "$NGINX_CONF" ] && echo "已配置 ($NGINX_CONF)" || echo "未生成 (执行 ./run.sh add_nginx 生成)")"
+    echo "  外部访问端口     : $EXTERNAL_PORT (SNI 域名: $SERVER_NAME)"
     local MAIN_DOMAIN
     MAIN_DOMAIN=$(echo "$SERVER_NAME" | awk '{print $1}')
     [ -z "$MAIN_DOMAIN" ] && MAIN_DOMAIN="localhost"
     if [ "$EXTERNAL_PORT" = "443" ]; then
-        echo "  统一访问入口 : https://$MAIN_DOMAIN/ (HTTPS SNI 443)"
+        echo "  统一访问入口     : https://$MAIN_DOMAIN/ (HTTPS SNI 443)"
     else
-        echo "  统一访问入口 : https://$MAIN_DOMAIN:$EXTERNAL_PORT/ (HTTPS SNI)"
+        echo "  统一访问入口     : https://$MAIN_DOMAIN:$EXTERNAL_PORT/ (HTTPS SNI)"
     fi
-    echo "  架构安全设计 : 前后端绑定 127.0.0.1 保护中，全站流量走 443 统一反代"
-    echo "  日志目录     : $LOG_DIR"
+    echo "  本地直连入口     : http://127.0.0.1:$FRONTEND_PORT/"
+    echo "  架构安全设计     : Django 单体一体化全栈托管，彻底移除 Node 常驻服务与内存开销"
+    echo "  日志目录         : $LOG_DIR"
     echo "============================================"
 }
 
@@ -762,7 +709,6 @@ case "$CMD" in
         gen_ssl_cert
         gen_nginx_config
         start_backend
-        start_frontend
         echo ""
         echo "============================================"
         echo "  萌芽（mengya-local）启动完成！"
@@ -773,8 +719,9 @@ case "$CMD" in
         else
             echo "  统一访问地址: https://$PRIMARY_DOMAIN:$EXTERNAL_PORT/ (HTTPS SNI)"
         fi
+        echo "  本地直连地址: http://127.0.0.1:$FRONTEND_PORT/"
         echo "  管理员账号:   $ADMIN_USERNAME"
-        echo "  安全架构:     前端(:$FRONTEND_PORT)与后端(:$BACKEND_PORT)已收敛至 127.0.0.1 回环保护"
+        echo "  一体化架构:   前端静态资源已合并至 Django，彻底消除 Node.js 常驻内存开销"
         echo "  Nginx 配置:   $([ -f "$NGINX_CONF" ] && echo "已就绪 ($NGINX_CONF)" || echo "尚未生成，可执行 ./run.sh add_nginx 生成")"
         echo "============================================"
         ;;
@@ -791,7 +738,6 @@ case "$CMD" in
         gen_ssl_cert
         gen_nginx_config
         start_backend
-        start_frontend
         echo ""
         echo "============================================"
         echo "  萌芽（mengya-local）重启完成！"
@@ -802,6 +748,9 @@ case "$CMD" in
         else
             echo "  统一访问地址: https://$PRIMARY_DOMAIN:$EXTERNAL_PORT/ (HTTPS SNI)"
         fi
+        echo "  本地直连地址: http://127.0.0.1:$FRONTEND_PORT/"
+        echo "  管理员账号:   $ADMIN_USERNAME"
+        echo "  一体化架构:   前端静态资源已合并至 Django，彻底消除 Node.js 常驻内存开销"
         echo "============================================"
         ;;
     add_nginx)
@@ -817,9 +766,9 @@ case "$CMD" in
     help)
         echo ""
         echo "萌芽（mengya-local）本地模式管理命令："
-        echo "  ./run.sh start [选项]        启动前后端本地服务（启动前自动清理垃圾与缓存）"
-        echo "  ./run.sh stop                停止本地前后端服务"
-        echo "  ./run.sh restart [选项]      重启本地前后端服务（重启前自动清理垃圾与缓存）"
+        echo "  ./run.sh start [选项]        启动本地一体化服务（前端合并至Django，零Node常驻）"
+        echo "  ./run.sh stop                停止本地一体化服务"
+        echo "  ./run.sh restart [选项]      重启本地一体化服务（前端合并至Django，零Node常驻）"
         echo "  ./run.sh status              查看运行状态与端口占用"
         echo "  ./run.sh add_nginx [选项]    生成基于 SNI 443 端口的 Nginx SSL 反向代理配置"
         echo "  ./run.sh init_data [选项]    检查并补齐全量样例数据（食谱/胎教/百科/周历/清单/商品/品牌）"

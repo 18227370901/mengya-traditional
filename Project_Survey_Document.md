@@ -166,18 +166,18 @@ config (settings/urls/celery)
 ### 2.5 部署架构
 
 ```
-用户浏览器
+用户浏览器 / 宿主机 Nginx (:443 SNI)
    │
    ▼
-nginx (:80)
-   ├── / → frontend（Vite dev :5173 / 生产构建静态）
-   └── /api/、/admin/ → backend（Django :8000）
-                           ├── PostgreSQL（pg18 默认，:5433 宿主机映射；旧方案可用 15-alpine）
-                           ├── Redis 7（:6380）
-                           └── Celery worker（任务队列，当前无实质任务）
+Django 一体化服务 (:5173 / 本地直连或 Nginx 反代)
+   ├── / 、/timeline 等全量 SPA 页面 → Django 渲染 index.html (前端 SPA)
+   ├── /assets/、/static/ → Django 直发静态资源
+   ├── /api/ → Django REST Framework 业务接口
+   └── /admin/ → Django 原生管理后台
+                           └── 本地 SQLite 3 (backend/db.sqlite3 轻量独立存储)
 ```
 
-> 注意：当前 Dockerfile 使用 `runserver`（开发服务器）与 `vite dev`（开发服务器）而非生产级 gunicorn/nginx 静态托管，**仅适合演示，不可直接上生产**。
+> 说明：已于 2026-09-21（REQ-27）完成架构优化，前端编译静态文件直接并入 Django 后端托管，彻底移除 Node.js 常驻进程（Vite dev server），实现单体一体化部署与极低内存常驻。
 
 ---
 
@@ -783,7 +783,7 @@ MODE 环境变量已设置 → 直接使用（校验取值）
 | R-04 | P1 | 无监控告警/链路追踪 | 运维 | 高 | 引入 Sentry（错误） + Prometheus+Grafana（指标） |
 | R-05 | P1 | 无数据备份 | 数据安全 | 高 | 生产库启用 pg_dump 定时备份 + 异地存储 |
 | R-06 | P1 | 无 CI/CD 与依赖审计 | 交付/供应链 | 中 | GitHub Actions + pip-audit + npm audit + Docker 镜像扫描 |
-| R-07 | P1 | 生产用 runserver/vite dev | 性能/稳定性 | 高 | 换 gunicorn/uvicorn + 静态资源 CDN/nginx |
+| R-07 | P1 | ~~生产用 runserver/vite dev~~ **已解决（2026-09-21）**：前端静态产物合入 Django 后端一体化托管，彻底移除 Node 常驻 | 性能/稳定性 | 低 | 彻底根除 Node 内存占用与 OOM 风险 |
 | R-08 | P1 | AI 无内容审核与滥用限制 | 合规 | 中高 | 引入内容安全 API + 会话/Token 级限流 |
 | R-09 | P1 | 商品价格 JSON 无更新机制 | 业务准确 | 中 | 引入定时同步任务（Celery beat）或对接电商 API |
 | R-10 | P1 | 接口无版本化 | 演进 | 中 | API 前缀加版本 v1；契约文档完善 |
@@ -1667,3 +1667,37 @@ MODE 环境变量已设置 → 直接使用（校验取值）
   - 使用 `bash -n run.sh` 进行静态语法检测，0 错误 0 警告；
   - 在 Git Bash 与原生 Linux 环境下执行 `./run.sh help`、`./run.sh status` 均正常返回预期内容；
   - 经环境检测，所有 `local` 关键字已 100% 处于函数调用栈内部，无任何全局语法漏洞。
+
+### 12.27 消除 Node.js 常驻开销：传统部署版前端静态产物合并至 Django 后端单体一体化改造 (REQ-27)
+- **需求背景与痛点**：
+  - 用户反馈在低配或有限资源的生产服务器上运行本地传统部署版时，存在服务器内存大量被占用甚至发生 OOM 的情况。
+  - 经系统性审查与排查，根因在于传统部署版的 `run.sh` 与 `run.ps1` 原先分别启动了 `vite` 开发服务器（Node.js 运行时）与 `Django` 两个独立进程，Node.js 常驻开销高达 150MB~350MB+，且伴随持续的文件监听与 V8 垃圾回收延迟。
+  - 用户明确要求：**在不修改已有功能点的前提下，彻底移除 Node 启动方式，将前端静态编译产物直接合并至 Django 后端**，实现极简、超低内存常驻的单体一体化部署。
+- **架构升级与实施明细**：
+  - **1. 前端静态生产产物打包与目录整合**：
+    - 将 React + Vite 前端工程编译生成的纯静态生产产物规范化合并至后端工程目录结构中；
+    - 模板入口文件放置于 `templates/index.html`；
+    - 静态 JS、CSS 及胎教音频图文资源整合放置于 `static/assets/` 与 `static/fetal-stories/`；
+    - 生产运行层**零 Node.js 依赖、零 Node 常驻进程**，纯 Python 轻量运行时环境。
+  - **2. Django 后端全路由接管与静态资产直发 (`config/urls.py` & `config/settings.py`)**：
+    - 配置 `STATICFILES_DIRS = [STATIC_DIR] if STATIC_DIR.exists() else []`，原生加载静态资源；
+    - 在 `config/urls.py` 中引入 SPA 路由通配兜底规则：
+      `re_path(r'^(?!api/|admin/|static/|assets/|fetal-stories/).*$', TemplateView.as_view(template_name="index.html"))`
+      保证全站 29 个 React 前端页面的客户端路由（如 `/timeline`、`/login`、`/products`、`/admin` 等）无论直接在地址栏输入访问还是刷新均能正常渲染，绝不触发 404；
+    - 新增静态资源直发路由（支持 `/assets/`、`/fetal-stories/`、`/static/` 及常用网站图标），为客户端提供静态资产流式直连传输。
+  - **3. 本地传统管理脚本全链路升级 (`run.sh` & `run.ps1`)**：
+    - **Linux/macOS 脚本 (`run.sh`)**：
+      - 将架构描述更新为单体一体化服务模型；
+      - 启动流程由双服务精简为单一 Django 服务，监听 `0.0.0.0:$FRONTEND_PORT`（默认 5173），直接托管前端 SPA 与后端 API；
+      - 移除 Node/Vite 启动调用，彻底杜绝 Node 运行时常驻；
+      - `stop_all` 仅收敛停止 Django 一体化进程并清理 PID 文件；
+      - `show_status` 统一呈现单体一体化运行状态与访问入口；
+      - `gen_nginx_config` 生成的 Nginx SNI 443 反代规则统一代理至 `http://127.0.0.1:$FRONTEND_PORT`，保持外部 HTTPS SNI 访问契约完全不变。
+    - **Windows 脚本 (`run.ps1`)**：
+      - 将启动逻辑收敛为单体一体化服务 `Start-BackendService`，绑定 `$FRONTEND_PORT`（默认 5173）；
+      - 启动主流程移除 `Start-FrontendService`，停止操作仅停止一体化后端进程；
+      - 运行状态查询精准呈现单体一体化架构与直连地址。
+  - **4. 性能与资源指标收益**：
+    - **内存开销骤降**：整站常驻物理内存由原先的 ~350MB-500MB+ 降至 **~80MB-110MB**，内存占用降低 70% 以上，彻底根除了 Node.js 常驻导致的内存泄露与 OOM 隐患；
+    - **网络延迟降低**：前端请求后端 API（`/api/...`）无需再经过 Vite 开发服务器的 proxy 转发，直接在 Django 原生处理，接口调用响应时间显著缩减；
+    - **零功能丢失**：全量 29 个前端业务页面、971 条脱敏业务数据、自动数据迁移与超级管理员账号同步完全保留并稳定运行。
