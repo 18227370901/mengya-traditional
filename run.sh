@@ -55,9 +55,11 @@ if [ ! -f ".env" ]; then
 fi
 
 if [ -f ".env" ]; then
+    # 自动修复 .env 中带空格但未加引号的值（避免 bash source .env 时报 command not found）
+    sed -i.bak -E 's/^([A-Za-z0-9_]+)=([^"#][^#]*[[:space:]][^#]*)$/\1="\2"/' ".env" 2>/dev/null && rm -f ".env.bak"
     set -a
     # shellcheck disable=SC1091
-    . ./.env
+    . ./.env 2>/dev/null || true
     set +a
 fi
 
@@ -66,8 +68,13 @@ update_env_var() {
     local key="$1"
     local val="$2"
     if [ -f ".env" ]; then
+        # 智能添加引号：若包含空格且未加双引号，自动包裹双引号以保障 bash source 安全
+        local formatted_val="$val"
+        if [[ "$val" =~ [[:space:]] ]] && [[ ! "$val" =~ ^\".*\"$ ]]; then
+            formatted_val="\"$val\""
+        fi
         if grep -q "^${key}=" ".env" 2>/dev/null; then
-            sed -i.bak "s|^${key}=.*|${key}=${val}|" ".env" 2>/dev/null && rm -f ".env.bak"
+            sed -i.bak "s|^${key}=.*|${key}=${formatted_val}|" ".env" 2>/dev/null && rm -f ".env.bak"
         else
             # 确保在末尾追加前文件以换行符结尾，避免与注释行等粘连
             if [ -s ".env" ]; then
@@ -77,7 +84,7 @@ update_env_var() {
                     echo "" >> ".env"
                 fi
             fi
-            echo "${key}=${val}" >> ".env"
+            echo "${key}=${formatted_val}" >> ".env"
         fi
     fi
 }
@@ -100,6 +107,37 @@ resolve_abs_path() {
             ;;
     esac
 }
+# 格式化输出 SNI 访问地址清单（智能支持单域名与多域名）
+print_access_urls() {
+    local label="${1:-统一访问地址}"
+    local port="${2:-$EXTERNAL_PORT}"
+    local port_suffix=""
+    if [ -n "$port" ] && [ "$port" != "443" ] && [ "$port" != "80" ]; then
+        port_suffix=":$port"
+    fi
+
+    local domain_count
+    domain_count=$(echo "$SERVER_NAME" | wc -w)
+
+    if [ "$domain_count" -le 1 ]; then
+        local single_domain
+        single_domain=$(echo "$SERVER_NAME" | awk '{print $1}')
+        [ -z "$single_domain" ] && single_domain="localhost"
+        echo "  ${label}: https://${single_domain}${port_suffix}/ (HTTPS SNI 入口)"
+    else
+        echo "  ${label} (支持 $domain_count 个 SNI 域名):"
+        local idx=1
+        for d in $SERVER_NAME; do
+            if [ "$idx" -eq 1 ]; then
+                echo "    - 主访问入口:   https://${d}${port_suffix}/"
+            else
+                echo "    - 附加入口[$((idx - 1))]: https://${d}${port_suffix}/"
+            fi
+            idx=$((idx + 1))
+        done
+    fi
+}
+
 
 
 # 外部访问端口默认统一为 443
@@ -521,6 +559,7 @@ EOF
     echo "  SSL 证书路径:         $CERT_FILE"
     echo "  SNI 监听域名:         $SERVER_NAME (以 SERVER_NAME 为准，主域名: $MAIN_DOMAIN)"
     echo "  外部访问端口:         $EXTERNAL_PORT"
+    print_access_urls "HTTPS 访问入口" "$EXTERNAL_PORT"
     echo ""
 
     # 检测并警告 NGINX_CONF_DIR 中遗留的 8000 端口旧配置
@@ -650,14 +689,7 @@ show_status() {
     echo "  前端托管架构     : 前端生产静态产物已合并至 Django (templates/ & static/)，零 Node 进程"
     echo "  Nginx SNI        : $([ -f "$NGINX_CONF" ] && echo "已配置 ($NGINX_CONF)" || echo "未生成 (执行 ./run.sh add_nginx 生成)")"
     echo "  外部访问端口     : $EXTERNAL_PORT (SNI 域名: $SERVER_NAME)"
-    local MAIN_DOMAIN
-    MAIN_DOMAIN=$(echo "$SERVER_NAME" | awk '{print $1}')
-    [ -z "$MAIN_DOMAIN" ] && MAIN_DOMAIN="localhost"
-    if [ "$EXTERNAL_PORT" = "443" ]; then
-        echo "  统一访问入口     : https://$MAIN_DOMAIN/ (HTTPS SNI 443)"
-    else
-        echo "  统一访问入口     : https://$MAIN_DOMAIN:$EXTERNAL_PORT/ (HTTPS SNI)"
-    fi
+    print_access_urls "统一访问入口" "$EXTERNAL_PORT"
     echo "  本地直连入口     : http://127.0.0.1:$FRONTEND_PORT/"
     echo "  架构安全设计     : Django 单体一体化全栈托管，彻底移除 Node 常驻服务与内存开销"
     echo "  日志目录         : $LOG_DIR"
@@ -786,13 +818,7 @@ case "$CMD" in
         echo ""
         echo "============================================"
         echo "  萌芽（mengya-local）启动完成！"
-        PRIMARY_DOMAIN=$(echo "$SERVER_NAME" | awk '{print $1}')
-        [ -z "$PRIMARY_DOMAIN" ] && PRIMARY_DOMAIN="localhost"
-        if [ "$EXTERNAL_PORT" = "443" ]; then
-            echo "  统一访问地址: https://$PRIMARY_DOMAIN/ (HTTPS 443 SNI 唯一入口)"
-        else
-            echo "  统一访问地址: https://$PRIMARY_DOMAIN:$EXTERNAL_PORT/ (HTTPS SNI)"
-        fi
+        print_access_urls "统一访问地址" "$EXTERNAL_PORT"
         echo "  本地直连地址: http://127.0.0.1:$FRONTEND_PORT/"
         echo "  管理员账号:   $ADMIN_USERNAME"
         echo "  一体化架构:   前端静态资源已合并至 Django，彻底消除 Node.js 常驻内存开销"
@@ -815,13 +841,7 @@ case "$CMD" in
         echo ""
         echo "============================================"
         echo "  萌芽（mengya-local）重启完成！"
-        PRIMARY_DOMAIN=$(echo "$SERVER_NAME" | awk '{print $1}')
-        [ -z "$PRIMARY_DOMAIN" ] && PRIMARY_DOMAIN="localhost"
-        if [ "$EXTERNAL_PORT" = "443" ]; then
-            echo "  统一访问地址: https://$PRIMARY_DOMAIN/ (HTTPS 443 SNI 唯一入口)"
-        else
-            echo "  统一访问地址: https://$PRIMARY_DOMAIN:$EXTERNAL_PORT/ (HTTPS SNI)"
-        fi
+        print_access_urls "统一访问地址" "$EXTERNAL_PORT"
         echo "  本地直连地址: http://127.0.0.1:$FRONTEND_PORT/"
         echo "  管理员账号:   $ADMIN_USERNAME"
         echo "  一体化架构:   前端静态资源已合并至 Django，彻底消除 Node.js 常驻内存开销"
