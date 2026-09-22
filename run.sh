@@ -69,6 +69,14 @@ update_env_var() {
         if grep -q "^${key}=" ".env" 2>/dev/null; then
             sed -i.bak "s|^${key}=.*|${key}=${val}|" ".env" 2>/dev/null && rm -f ".env.bak"
         else
+            # 确保在末尾追加前文件以换行符结尾，避免与注释行等粘连
+            if [ -s ".env" ]; then
+                local last_char
+                last_char=$(tail -c 1 ".env" 2>/dev/null || true)
+                if [ -n "$last_char" ]; then
+                    echo "" >> ".env"
+                fi
+            fi
             echo "${key}=${val}" >> ".env"
         fi
     fi
@@ -359,7 +367,11 @@ gen_ssl_cert() {
     echo "==> 检查/配置 SSL 证书 (传统部署版)"
 
     NGINX_CERT_DIR=$(resolve_abs_path "$NGINX_CERT_DIR")
-    mkdir -p "$NGINX_CERT_DIR"
+    if ! mkdir -p "$NGINX_CERT_DIR" 2>/dev/null || ! (touch "$NGINX_CERT_DIR/.perm_test" 2>/dev/null && rm -f "$NGINX_CERT_DIR/.perm_test" 2>/dev/null); then
+        echo -e "\033[1;33m[提示] 目录 $NGINX_CERT_DIR 无写入权限或不存在，跳过自动生成 SSL 证书。\033[0m"
+        echo -e "\033[1;33m       若需生成，请使用具备写入权限的账号执行: sudo ./run.sh add_nginx\033[0m"
+        return 0
+    fi
 
     local MAIN_DOMAIN
     MAIN_DOMAIN=$(echo "$SERVER_NAME" | awk '{print $1}')
@@ -426,7 +438,11 @@ gen_nginx_config() {
     NGINX_CERT_DIR=$(resolve_abs_path "$NGINX_CERT_DIR")
     NGINX_CONF="$NGINX_CONF_DIR/mengya_ssl.conf"
 
-    mkdir -p "$NGINX_CONF_DIR" "$NGINX_CERT_DIR"
+    if ! mkdir -p "$NGINX_CONF_DIR" 2>/dev/null || ! (touch "$NGINX_CONF_DIR/.perm_test" 2>/dev/null && rm -f "$NGINX_CONF_DIR/.perm_test" 2>/dev/null); then
+        echo -e "\033[1;33m[提示] 目录 $NGINX_CONF_DIR 无写入权限或不存在，跳过自动生成 Nginx 配置文件。\033[0m"
+        echo -e "\033[1;33m       若需生成，请使用具备写入权限的账号执行: sudo ./run.sh add_nginx\033[0m"
+        return 0
+    fi
 
     # 主域名用于 OpenSSL 证书 CN 与控制台访问链接展示（以 SERVER_NAME 配置为准）
     local MAIN_DOMAIN
@@ -564,7 +580,22 @@ stop_service() {
         local pattern_pids
         pattern_pids=$(pgrep -f "$pattern" 2>/dev/null || true)
         if [ -n "$pattern_pids" ]; then
-            target_pids="$target_pids $pattern_pids"
+            for cp in $pattern_pids; do
+                # 排除属于 Docker 容器内的进程（容器内工作目录通常为 /app，或 cgroup 包含 docker/containerd）
+                if [ -d "/proc/$cp" ]; then
+                    local proc_cwd
+                    proc_cwd=$(readlink -f "/proc/$cp/cwd" 2>/dev/null || true)
+                    if [ "$proc_cwd" = "/app" ] || [[ "$proc_cwd" =~ ^/var/lib/docker ]]; then
+                        continue
+                    fi
+                    local proc_cgroup
+                    proc_cgroup=$(cat "/proc/$cp/cgroup" 2>/dev/null || true)
+                    if [[ "$proc_cgroup" =~ docker|containerd ]]; then
+                        continue
+                    fi
+                fi
+                target_pids="$target_pids $cp"
+            done
         fi
     fi
 
@@ -603,7 +634,7 @@ stop_service() {
 
 stop_all() {
     echo "==> 停止本地服务"
-    stop_service "$(get_backend_pid)" "Django 一体化服务" "$BACKEND_PID_FILE" "$FRONTEND_PORT" "manage.py runserver"
+    stop_service "$(get_backend_pid)" "Django 一体化服务" "$BACKEND_PID_FILE" "$FRONTEND_PORT" "manage.py runserver 0.0.0.0:$FRONTEND_PORT"
     rm -f "$FRONTEND_PID_FILE"
     echo "  本地服务停止操作完成"
 }
