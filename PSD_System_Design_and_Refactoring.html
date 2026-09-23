@@ -1071,6 +1071,14 @@ erDiagram
         <h3 class="sub-title">8.1 环境变量与配置分离规范</h3>
         <p>系统严格遵循 <strong>12-Factor App</strong> 标准：配置通过根目录 <code>.env</code> 文件与代码彻底解耦，提供 <code>.env.example</code> 作为基准模板。</p>
         <p><code>run.sh#update_env_var</code> 与 <code>run.sh#normalize_domains</code> 针对多 SNI 域名配置（支持空格、逗号、分号及引号混配，如 <code>SERVER_NAME="mengya.local, baby.local"</code>）增加了自动语法清洗、双引号包裹与读取前正则自愈，防止分隔符异常导致 Bash 语法解析崩溃或域名无法识别。</p>
+        <div class="note-box">
+            <strong>Nginx 反代配置智能差分比对与静默自愈引擎 (<code>run.sh#gen_nginx_config</code>)</strong>
+            <ul>
+                <li><strong>智能差分比对</strong>：预计算目标反代配置并与现有磁盘配置比对（自动忽略时间戳注释差异），配置完全一致时静默保留，杜绝冗余快照文件堆积并确保日常启动（<code>start</code>/<code>restart</code>）零干扰；</li>
+                <li><strong>参数漂移自动安全自愈</strong>：当检测到前端端口或 SNI 域名变更时，自动备份时间戳快照并同步重写 Nginx 反代配置，彻底消除端口不一致导致的 502 Bad Gateway 隐患；</li>
+                <li><strong>免打扰锁定机制</strong>：首行带 <code># MANAGED_BY_ADMIN_DO_NOT_OVERWRITE</code> 标记时绝对跳过覆盖，在专属命令（<code>add_nginx</code>）下提供交互式覆盖确认，为个性化定制提供多层次防护。</li>
+            </ul>
+        </div>
 
         <h3 class="sub-title">8.2 认证与安全防御纵深</h3>
         <ul>
