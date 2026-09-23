@@ -124,6 +124,18 @@ function Start-BackendService {
 
     Push-Location $SCRIPT_DIR
     try {
+        # 静态资源自愈：检测 static/fetal-stories，缺失时自动从 frontend/public/fetal-stories 同步
+        $staticFetalDir = Join-Path $SCRIPT_DIR 'static\fetal-stories'
+        $publicFetalDir = Join-Path $SCRIPT_DIR 'frontend\public\fetal-stories'
+        if ((-not (Test-Path -LiteralPath $staticFetalDir)) -and (Test-Path -LiteralPath $publicFetalDir)) {
+            Write-Host '  [自愈] 自动同步胎教故事静态产物至 static/fetal-stories...' -ForegroundColor Cyan
+            $staticDir = Join-Path $SCRIPT_DIR 'static'
+            if (-not (Test-Path -LiteralPath $staticDir)) {
+                New-Item -ItemType Directory -Path $staticDir -Force | Out-Null
+            }
+            Copy-Item -LiteralPath $publicFetalDir -Destination $staticFetalDir -Recurse -Force | Out-Null
+        }
+
         Write-Host '  执行数据迁移...'
         & $pyCmd manage.py migrate --noinput | Out-Null
         Write-Host '  初始化种子数据...'

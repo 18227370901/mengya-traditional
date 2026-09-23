@@ -365,6 +365,13 @@ start_backend() {
         fi
     fi
 
+    # 静态资源自愈：检测 static/fetal-stories，缺失时自动从 frontend/public/fetal-stories 同步
+    if [ ! -d "$PROJECT_ROOT/static/fetal-stories" ] && [ -d "$PROJECT_ROOT/frontend/public/fetal-stories" ]; then
+        echo "  [自愈] 自动同步胎教故事静态产物至 static/fetal-stories..."
+        mkdir -p "$PROJECT_ROOT/static"
+        cp -r "$PROJECT_ROOT/frontend/public/fetal-stories" "$PROJECT_ROOT/static/"
+    fi
+
     echo "  执行数据迁移..."
     "$PYTHON" manage.py migrate --noinput
     echo "  初始化种子数据（孕期周历/胎教故事/孕期食谱/幼儿百科/商品品牌/待产清单）..."
