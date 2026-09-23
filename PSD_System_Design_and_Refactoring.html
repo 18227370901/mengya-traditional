@@ -1070,7 +1070,7 @@ erDiagram
         
         <h3 class="sub-title">8.1 环境变量与配置分离规范</h3>
         <p>系统严格遵循 <strong>12-Factor App</strong> 标准：配置通过根目录 <code>.env</code> 文件与代码彻底解耦，提供 <code>.env.example</code> 作为基准模板。</p>
-        <p><code>run.sh#update_env_var</code> 针对多 SNI 域名配置（如 <code>SERVER_NAME="mengya.local baby.local"</code>）增加了自动双引号包裹与读取前正则自愈，防止空格导致 Bash 语法解析崩溃。</p>
+        <p><code>run.sh#update_env_var</code> 与 <code>run.sh#normalize_domains</code> 针对多 SNI 域名配置（支持空格、逗号、分号及引号混配，如 <code>SERVER_NAME="mengya.local, baby.local"</code>）增加了自动语法清洗、双引号包裹与读取前正则自愈，防止分隔符异常导致 Bash 语法解析崩溃或域名无法识别。</p>
 
         <h3 class="sub-title">8.2 认证与安全防御纵深</h3>
         <ul>

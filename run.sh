@@ -107,7 +107,36 @@ resolve_abs_path() {
             ;;
     esac
 }
-# 格式化输出 SNI 访问地址清单（智能支持单域名与多域名）
+# 智能规范化域名清单（纯 Bash 零依赖：支持逗号/分号/空格/引号清洗，自动去重与协议修剪）
+normalize_domains() {
+    local raw="$1"
+    local clean="${raw//,/ }"
+    clean="${clean//;/ }"
+    clean="${clean//\"/}"
+    clean="${clean//\'/}"
+
+    local normalized=""
+    for d in $clean; do
+        d="${d#http://}"
+        d="${d#https://}"
+        d="${d%%/*}"
+        d="${d%%:*}"
+        [ -z "$d" ] && continue
+        local exists=0
+        for existing in $normalized; do
+            if [ "$existing" = "$d" ]; then
+                exists=1
+                break
+            fi
+        done
+        if [ "$exists" -eq 0 ]; then
+            normalized="${normalized:+$normalized }$d"
+        fi
+    done
+    echo "$normalized"
+}
+
+# 格式化输出 SNI 访问地址清单（全量自适应展示所有 SNI 域名）
 print_access_urls() {
     local label="${1:-统一访问地址}"
     local port="${2:-$EXTERNAL_PORT}"
@@ -116,22 +145,26 @@ print_access_urls() {
         port_suffix=":$port"
     fi
 
-    local domain_count
-    domain_count=$(echo "$SERVER_NAME" | wc -w)
+    local domains
+    domains=$(normalize_domains "$SERVER_NAME")
+    [ -z "$domains" ] && domains="localhost"
+
+    local domain_count=0
+    for d in $domains; do
+        domain_count=$((domain_count + 1))
+    done
 
     if [ "$domain_count" -le 1 ]; then
-        local single_domain
-        single_domain=$(echo "$SERVER_NAME" | awk '{print $1}')
-        [ -z "$single_domain" ] && single_domain="localhost"
-        echo "  ${label}: https://${single_domain}${port_suffix}/ (HTTPS SNI 入口)"
+        local single_domain="$domains"
+        echo "  ${label}: https://${single_domain}${port_suffix}/ (HTTPS ${port:-443} SNI 入口)"
     else
-        echo "  ${label} (支持 $domain_count 个 SNI 域名):"
+        echo "  ${label} (已配置 $domain_count 个 SNI 域名，均可通过 HTTPS ${port:-443} 访问):"
         local idx=1
-        for d in $SERVER_NAME; do
+        for d in $domains; do
             if [ "$idx" -eq 1 ]; then
                 echo "    - 主访问入口:   https://${d}${port_suffix}/"
             else
-                echo "    - 附加入口[$((idx - 1))]: https://${d}${port_suffix}/"
+                echo "    - 附加入口 [$((idx - 1))]: https://${d}${port_suffix}/"
             fi
             idx=$((idx + 1))
         done
@@ -143,7 +176,7 @@ print_access_urls() {
 # 外部访问端口默认统一为 443
 PORT="${PORT:-${EXTERNAL_PORT:-443}}"
 EXTERNAL_PORT="$PORT"
-SERVER_NAME="${SERVER_NAME:-${DOMAIN:-mengya.local localhost}}"
+SERVER_NAME=$(normalize_domains "${SERVER_NAME:-${DOMAIN:-mengya.local localhost}}")
 
 # 一体化服务访问端口（默认 5173）
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
@@ -845,9 +878,9 @@ if [ -n "$CUSTOM_ADMIN_NICK" ]; then
 fi
 
 if [ -n "$CUSTOM_DOMAIN" ]; then
-    SERVER_NAME="$CUSTOM_DOMAIN"
-    update_env_var "SERVER_NAME" "$CUSTOM_DOMAIN"
-    echo -e "\033[0;32m[配置] SNI 匹配域名已设置为: $CUSTOM_DOMAIN (已同步至 .env)\033[0m"
+    SERVER_NAME=$(normalize_domains "$CUSTOM_DOMAIN")
+    update_env_var "SERVER_NAME" "$SERVER_NAME"
+    echo -e "\033[0;32m[配置] SNI 匹配域名已设置为: $SERVER_NAME (已同步至 .env)\033[0m"
 fi
 
 export FRONTEND_PORT

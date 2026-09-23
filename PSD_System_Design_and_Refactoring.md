@@ -400,7 +400,7 @@ AuditLog {
 
 系统严格遵循 **12-Factor App** 标准：配置通过根目录 `.env` 文件与代码彻底解耦，提供 `.env.example` 作为基准模板。
 
-`run.sh#update_env_var` 针对多 SNI 域名配置（如 `SERVER_NAME="mengya.local baby.local"`）增加了自动双引号包裹与读取前正则自愈，防止空格导致 Bash 语法解析崩溃。
+`run.sh#update_env_var` 与 `run.sh#normalize_domains` 针对多 SNI 域名配置（支持空格、逗号、分号及引号混配，如 `SERVER_NAME="mengya.local, baby.local"`）增加了自动语法清洗、双引号包裹与读取前正则自愈，防止分隔符异常导致 Bash 语法解析崩溃或域名无法识别。
 
 ### 8.2 认证与安全防御纵深
 
