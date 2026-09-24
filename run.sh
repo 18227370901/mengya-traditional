@@ -26,7 +26,7 @@
 #   ADMIN_PASSWORD    管理员密码（默认 admin123）
 #   ADMIN_NICKNAME    管理员昵称（默认 管理员）
 #   NGINX_CONF_DIR    Nginx 额外配置目录（默认 /opt/service/nginx/conf.d）
-#   NGINX_CERT_DIR    Nginx SSL 证书目录（默认 /opt/service/nginx/ssl）
+#   NGINX_CERT_DIR    Nginx SSL 证书目录（默认当前项目 ssl 目录）
 #   ENABLE_HTTP_REDIRECT 是否生成 80 转 443 重定向规则（1=开启，0=关闭，默认 1）
 # ============================================================
 
@@ -187,7 +187,10 @@ ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin123}"
 ADMIN_NICKNAME="${ADMIN_NICKNAME:-管理员}"
 
 NGINX_CONF_DIR=$(resolve_abs_path "${NGINX_CONF_DIR:-/opt/service/nginx/conf.d}")
-NGINX_CERT_DIR=$(resolve_abs_path "${NGINX_CERT_DIR:-/opt/service/nginx/ssl}")
+NGINX_CERT_DIR=$(resolve_abs_path "${NGINX_CERT_DIR:-$SCRIPT_DIR/ssl}")
+if [ ! -d "$NGINX_CERT_DIR" ]; then
+    mkdir -p "$NGINX_CERT_DIR"
+fi
 NGINX_CONF="$NGINX_CONF_DIR/mengya_ssl.conf"
 ENABLE_HTTP_REDIRECT="${ENABLE_HTTP_REDIRECT:-1}"
 

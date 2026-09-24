@@ -1079,6 +1079,14 @@ erDiagram
                 <li><strong>免打扰锁定机制</strong>：首行带 <code># MANAGED_BY_ADMIN_DO_NOT_OVERWRITE</code> 标记时绝对跳过覆盖，在专属命令（<code>add_nginx</code>）下提供交互式覆盖确认，为个性化定制提供多层次防护。</li>
             </ul>
         </div>
+        <div class="card" style="margin-top: 15px;">
+            <strong>SSL 证书目录默认本地化与自愈创建 (<code>run.sh#NGINX_CERT_DIR</code>)</strong>
+            <ul>
+                <li><strong>默认路径本地化</strong>：证书默认路径由宿主机全局目录 <code>/opt/service/nginx/ssl</code> 重构为当前项目目录下的 <code>ssl/</code>（<code>$SCRIPT_DIR/ssl</code>），消除对外部全局目录的强制依赖；</li>
+                <li><strong>目录缺失静默自愈</strong>：在脚本环境初始化阶段，增加目录存在性检测与 <code>mkdir -p</code> 自动创建逻辑，保障生成或读取证书前目录绝对就绪；</li>
+                <li><strong>兼容性与优先级保障</strong>：全面兼容 <code>.env</code> 与环境变量中显式配置的自定义路径，并由 <code>resolve_abs_path</code> 自动转为物理绝对路径。</li>
+            </ul>
+        </div>
 
         <h3 class="sub-title">8.2 认证与安全防御纵深</h3>
         <ul>
