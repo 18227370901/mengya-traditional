@@ -17,6 +17,20 @@ param (
 $SCRIPT_DIR = $PSScriptRoot
 if (-not $SCRIPT_DIR) { $SCRIPT_DIR = (Get-Location).Path }
 
+# 载入 .env 配置
+$envFile = Join-Path $SCRIPT_DIR '.env'
+if (Test-Path -LiteralPath $envFile) {
+    foreach ($rawLine in (Get-Content -LiteralPath $envFile -Encoding UTF8)) {
+        $trimmed = $rawLine.Trim()
+        if ($trimmed -match '^([A-Za-z0-9_]+)=(.*)$' -and -not $trimmed.StartsWith('#')) {
+            $k = $matches[1]
+            $v = $matches[2].Trim('"', "'")
+            Set-Item -Path ("env:" + $k) -Value $v
+        }
+    }
+}
+$DB_MODE = if ($env:DB_MODE) { $env:DB_MODE } else { 'sqlite' }
+
 $FRONTEND_PORT = if ($env:FRONTEND_PORT) { [int]$env:FRONTEND_PORT } elseif ($env:PORT) { [int]$env:PORT } else { 5173 }
 $BACKEND_PORT = $FRONTEND_PORT
 $ADMIN_USERNAME = if ($env:ADMIN_USERNAME) { $env:ADMIN_USERNAME } else { 'admin' }
@@ -209,8 +223,12 @@ function Show-Status {
     $bStatus = if ($bInUse) { ('运行中 (PID: ' + $bPid + ', 端口 ' + $FRONTEND_PORT + ')') } else { '未运行' }
 
     Write-Host ('  一体化服务 : ' + $bStatus)
-    Write-Host ('  数据库模式 : 本地单文件 SQLite (db.sqlite3) [与 Docker 版 100% 物理隔离]')
-    Write-Host ('  数据库文件 : ' + (Join-Path $SCRIPT_DIR 'db.sqlite3'))
+    Write-Host ('  数据库模式 : ' + $DB_MODE + ' [与 Docker 版 100% 物理隔离]')
+    if ($DB_MODE -eq 'sqlite') {
+        Write-Host ('  数据库文件 : ' + (Join-Path $SCRIPT_DIR 'db.sqlite3'))
+    } else {
+        Write-Host ('  数据库连接 : ' + $env:DATABASE_URL)
+    }
     Write-Host ('  架构模式   : Django 统一托管前端 SPA、静态资源与后端 API，彻底移除 Node.js 常驻')
     Write-Host ('  访问地址   : http://localhost:' + $FRONTEND_PORT + '/')
     Write-Host ('  日志目录   : ' + $LOG_DIR)

@@ -1235,6 +1235,19 @@ apps/core/                                    apps/core/
   </ul>
 </div>
 
+
+<div style="margin-top:24px;padding:18px 24px;border-radius:8px;border-left:4px solid #3b82f6;background:var(--bg-card, #fff);">
+  <h3 style="margin-top:0;color:#3b82f6;">多数据库部署模式自适应架构与交互式向导规范 (v1.40)</h3>
+  <p>系统为传统本地版提供了三大多态数据库部署模式与智能化决策向导：</p>
+  <ul>
+    <li><strong>模式 1：SQLite 本地化单文件 (<code>sqlite</code>, 严格默认推荐)</strong>：零额外数据库容器，整站常驻约 50MB 内存，数据持久化于 <code>mengya-local/db.sqlite3</code>，与 Docker 版数据 <strong>100% 物理硬隔离</strong>。</li>
+    <li><strong>模式 2：共享已有 PostgreSQL 实例 (<code>shared</code>)</strong>：共用宿主机已有 PG 容器（如 <code>pgvector-18</code>），自动幂等创建应用专属库 <code>mengya_local</code> 与专属账号，与 Docker 版专属库 <code>mengya</code> 形成库级与权限级物理隔离。</li>
+    <li><strong>模式 3：独立专属 PostgreSQL 容器 (<code>dedicated</code>)</strong>：启动专属容器 <code>mengya_local-pg</code> (端口 5433)，应用 80MB 内核微服务调优。</li>
+    <li><strong>本地镜像严格就地复用</strong>：优先复用本地已有 PG 镜像，严禁联网重复下载。</li>
+    <li><strong>定时任务 / Cron / 重启全静默免交互</strong>：<code>restart</code>、<code>stop</code>、<code>status</code> 天然免交互；首次配置持久化至 <code>.env</code>；非交互终端/定时任务自动采用推荐选项防挂起；支持 <code>--reconfig</code> 重新唤醒向导。</li>
+  </ul>
+</div>
+
 </body>
 </html>
 
