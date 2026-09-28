@@ -209,6 +209,8 @@ function Show-Status {
     $bStatus = if ($bInUse) { ('运行中 (PID: ' + $bPid + ', 端口 ' + $FRONTEND_PORT + ')') } else { '未运行' }
 
     Write-Host ('  一体化服务 : ' + $bStatus)
+    Write-Host ('  数据库模式 : 本地单文件 SQLite (db.sqlite3) [与 Docker 版 100% 物理隔离]')
+    Write-Host ('  数据库文件 : ' + (Join-Path $SCRIPT_DIR 'db.sqlite3'))
     Write-Host ('  架构模式   : Django 统一托管前端 SPA、静态资源与后端 API，彻底移除 Node.js 常驻')
     Write-Host ('  访问地址   : http://localhost:' + $FRONTEND_PORT + '/')
     Write-Host ('  日志目录   : ' + $LOG_DIR)

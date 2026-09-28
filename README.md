@@ -449,3 +449,18 @@ mengya-local/
      - 原生下拉菜单 `<option>` 注入暗色背景与亮色字体，解决浏览器原生选项白底黑字冲突；
    - **ECharts 数据可视化自适应换肤**：
      - 多品对比雷达图（`ComparisonRadar`）与儿童生长曲线折线图（`GrowthChart`）自动订阅主题状态，自适应切换坐标轴、网格分割线与 Tooltip 深浅配色。
+
+---
+
+## 八、双版本数据库存储物理隔离规范 (v1.38)
+
+为彻底保障传统版与 Docker 版的数据独立性，系统建立了双版本底层数据库的 **100% 物理硬隔离机制**：
+
+1. **默认存储引擎固化**：
+   - 传统版（`mengya-local`）核心配置 `config/settings.py` 严格固化使用**本地独立单文件 SQLite**（`mengya-local/db.sqlite3`）；
+   - 彻底切断上级目录 `.env` 环境变量跨工程污染，默认忽略外部残留的 `DATABASE_URL`，开箱即用，零外部数据库依赖。
+2. **外部 PostgreSQL 按需显式启用**：
+   - 仅当管理员主动在本地 `.env` 中显式声明 `USE_POSTGRES=True` 且配置了有效连通的 `DATABASE_URL` 时，传统版才会尝试切换连接外部 PostgreSQL。
+3. **与 Docker 版完全物理隔离**：
+   - Docker 版（`mengya-docker`）数据库运行于独立容器 `mengya_db`，持久化于 Docker 命名存储卷 `pgdata`，内部端口 5432 仅供容器内网互联，不对宿主机暴露；
+   - 传统版在宿主机本地严格读写 `db.sqlite3` 文件，两者在数据存储介质、物理路径与网络边界上均实现全方位物理隔离，彻底杜绝数据交叉污染。

@@ -391,6 +391,7 @@ start_backend() {
     PYTHON=$(ensure_backend_deps "$PY_CMD")
 
     cd "$BACKEND_DIR"
+    echo "  [数据库] 传统版严格采用本地单文件 SQLite ($BACKEND_DIR/db.sqlite3)，与 Docker 版数据 100% 物理隔离"
     # 使用文件互斥锁，避免双版本同时启动时并发执行数据库迁移导致死锁或冲突
     local LOCK_FILE="/tmp/mengya_db_migrate.lock"
     local have_lock=0
@@ -805,6 +806,8 @@ show_status() {
     echo "  外部访问端口     : $EXTERNAL_PORT (SNI 域名: $SERVER_NAME)"
     print_access_urls "统一访问入口" "$EXTERNAL_PORT"
     echo "  本地直连入口     : http://127.0.0.1:$FRONTEND_PORT/"
+    echo "  数据库存储模式   : 本地单文件 SQLite (db.sqlite3) [与 Docker 版 100% 物理隔离]"
+    echo "  数据库物理文件   : $SCRIPT_DIR/db.sqlite3"
     echo "  架构安全设计     : Django 单体一体化全栈托管，彻底移除 Node 常驻服务与内存开销"
     echo "  日志目录         : $LOG_DIR"
     echo "============================================"

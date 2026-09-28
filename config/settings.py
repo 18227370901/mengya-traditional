@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-load_dotenv(BASE_DIR.parent / ".env")
+# 仅加载本地当前工程根目录下的 .env，彻底杜绝上级目录跨项目环境污染
 load_dotenv(BASE_DIR / ".env")
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "mengya-dev-insecure-secret-key-32bytes!")
@@ -74,15 +74,17 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-# ===== 数据库 =====
+# ===== 数据库配置（传统版严格默认采用本地独立 SQLite 文件，与 Docker 版数据 100% 物理隔离）=====
+# 传统版本默认模式：坚决使用本地独立 db.sqlite3 数据库文件，不依赖也不连接任何 PostgreSQL
+# 仅当显式声明 USE_POSTGRES=True 并提供可连通的 DATABASE_URL 时才启用 PostgreSQL
+USE_POSTGRES = os.getenv("USE_POSTGRES", "False").lower() in ("1", "true", "yes")
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+
 use_pg = False
-if DATABASE_URL:
+if USE_POSTGRES and DATABASE_URL:
     p = urlparse(DATABASE_URL)
     db_host = p.hostname or "localhost"
     db_port = p.port or 5432
-    # 探测 PostgreSQL 目标地址与端口是否可连通（超时 1.5 秒）
-    # 若在非容器宿主机环境且配置了 db 主机名，或配置的 PostgreSQL 服务未启动，自动安全回退 SQLite
     try:
         ip = socket.gethostbyname(db_host)
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -94,19 +96,19 @@ if DATABASE_URL:
     except Exception:
         use_pg = False
 
-    if use_pg:
-        DATABASES = {
-            "default": {
-                "ENGINE": "django.db.backends.postgresql",
-                "NAME": p.path.lstrip("/"),
-                "USER": p.username,
-                "PASSWORD": p.password,
-                "HOST": db_host,
-                "PORT": db_port,
-            }
+if use_pg:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": p.path.lstrip("/"),
+            "USER": p.username,
+            "PASSWORD": p.password,
+            "HOST": db_host,
+            "PORT": db_port,
         }
-
-if not use_pg:
+    }
+else:
+    # 默认模式：采用本地独立单文件 SQLite 数据库，数据持久化于 mengya-local/db.sqlite3
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
