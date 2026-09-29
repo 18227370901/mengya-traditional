@@ -1248,6 +1248,21 @@ apps/core/                                    apps/core/
   </ul>
 </div>
 
+
+<div style="margin-top:24px;padding:18px 24px;border-radius:8px;border-left:4px solid #10b981;background:var(--bg-card, #fff);">
+  <h3 style="margin-top:0;color:#10b981;">运维管理脚本组件化解耦与 bin/ 目录模块化治理规范 (v1.41)</h3>
+  <p>系统对 <code>run.sh</code> 进行了架构解耦：主入口仅保留核心启停流程与参数分发，专业能力全部下沉至 <code>bin/</code> 目录：</p>
+  <ul>
+    <li><code>bin/env.sh</code>：基础环境、.env 读写同步、绝对路径规范、域名规约、缓存清理、重启会话全量吊销；</li>
+    <li><code>bin/process.sh</code>：跨平台端口探针、进程树递归终止、PID 管理、多进程协同停止；</li>
+    <li><code>bin/python.sh</code>：Python 解释器侦测、虚拟环境依赖保障；</li>
+    <li><code>bin/db.sh</code>：硬件探针、3大数据库模式决策向导（严格默认 SQLite）、共享 PG 容器内 <code>mengya_local</code> 专属库与账号幂等创建；</li>
+    <li><code>bin/nginx.sh</code>：SAN 多域名证书签发、Nginx 反代配置写入、带时间戳快照防误触机制；</li>
+    <li><code>bin/data.sh</code>：种子数据与全量样例初始化；</li>
+    <li><strong>加载守卫保障</strong>：<code>run.sh</code> 循环检测并加载 <code>bin/*.sh</code>，缺失即预警退出，功能与参数 100% 保持一致。</li>
+  </ul>
+</div>
+
 </body>
 </html>
 

@@ -573,3 +573,33 @@ apps/core/                                    apps/core/
 2. **状态记忆持久化**：首次向导配置成功后自动将 `DB_MODE`、`USE_POSTGRES`、`DATABASE_URL` 等变量持久化至 `.env`，后续常规启动直接读取；
 3. **非交互环境自愈**：利用 `[ ! -t 0 ]` 探针检测无 TTY 环境（如 Cron、Systemd 守护进程、Jenkins/GitLab CI 流水线），或传入 `-y / --non-interactive` 时，自动静默应用推荐配置（SQLite）并自愈写入 `.env`；
 4. **显式重配开关**：运维人员如需变更模式，支持追加 `--reconfig` 参数（例如 `./run.sh start --reconfig`），随时唤醒全流程向导。
+
+
+### 10.4 运维管理脚本组件化解耦与 bin/ 目录模块化治理规范 (v1.41)
+
+#### 10.4.1 演化背景与治理目标
+传统版本运维脚本 `run.sh` 承载了跨平台端口探测、进程树终止、Python 虚拟环境自愈、三大数据库模式决策（严格默认 SQLite）、SSL 证书生成与 Nginx 反代写入等丰富功能，单文件代码量超过 1300 行。
+为提高运维脚本的直观性、模块化程度和长期可维护性，系统实施了“**主入口微内核 + bin/ 垂直领域组件库**”解耦重构。
+
+#### 10.4.2 模块化分层职责清单
+- **微内核主入口 (`run.sh`)**：仅保留环境安全检测、`bin/*.sh` 组件装载守卫、核心生命周期调度 (`start_backend` / `show_status`)、统一参数解析与命令分发，代码结构高度清晰；
+- **`bin/env.sh` (环境与配置域)**：负责 `.env` 读写持久化、物理绝对路径解析、SNI 域名归一化、URL 访问指引打印、临时缓存清理与重启会话全量吊销 (`invalidate_all_sessions`)；
+- **`bin/process.sh` (进程与端口管理域)**：负责跨平台端口探针 (`lsof` / `ss` / `netstat` / `/dev/tcp`)、PID 记录读取与存活性检测、进程树递归强制回收 (`kill_pid_tree`)、服务停止编排 (`stop_service` / `stop_all`)；
+- **`bin/python.sh` (Python 运行环境域)**：负责系统级 Python 解释器侦测、虚拟环境与基础依赖检查 (`ensure_backend_deps`)，保留老版前端空函数兼容旧接口；
+- **`bin/db.sh` (数据持久化治理域)**：负责宿主机内存与运行中 PG 容器探针、本地镜像优先复用、三大数据库模式决策向导（传统版严格默认推荐 SQLite 保障 100% 物理硬隔离）、共享 PG 容器内 `mengya_local` 专属库与账号幂等创建；
+- **`bin/nginx.sh` (网关与证书安全域)**：负责 OpenSSL SAN 扩展证书签发、Nginx 反代配置写入、带时间戳快照防误触机制；
+- **`bin/data.sh` (业务数据域)**：负责本地全量脱敏样例数据 (971条) 检查与补齐 (`init_data_local`)。
+
+#### 10.4.3 模块加载守卫机制
+```bash
+for mod in env process python db nginx data; do
+    mod_file="$SCRIPT_DIR/bin/${mod}.sh"
+    if [ -f "$mod_file" ]; then
+        . "$mod_file"
+    else
+        echo -e "\033[1;31m[错误] 缺失核心组件: bin/${mod}.sh，请检查项目完整性！\033[0m" >&2
+        exit 1
+    fi
+done
+```
+该设计从架构底层确保任何模块缺失均可即时被感知，杜绝半执行隐患，且 100% 保持了外部命令行交互与定时任务调度的兼容性。
