@@ -222,7 +222,7 @@ EXTRA_ARGS=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        start|stop|restart|status|add_nginx|init_data|seed|help)
+        start|stop|restart|status|add_nginx|init_data|seed|reconfig|reconfig_db|help)
             if [ -z "$CMD" ]; then
                 CMD="$1"
             else
@@ -390,6 +390,11 @@ case "$CMD" in
     init_data|seed)
         init_data_local $EXTRA_ARGS
         ;;
+    reconfig|reconfig_db)
+        RECONFIG_DB=1
+        setup_db_for_mode
+        echo -e "\033[0;32m[完成] 数据库模式已重新配置并保存至 .env (当前模式: $DB_MODE)\033[0m"
+        ;;
     help)
         echo ""
         echo "萌芽（mengya-local）本地模式管理命令："
@@ -399,6 +404,7 @@ case "$CMD" in
         echo "  ./run.sh status              查看运行状态与端口占用"
         echo "  ./run.sh add_nginx [选项]    生成基于 SNI 443 端口的 Nginx SSL 反向代理配置"
         echo "  ./run.sh init_data [选项]    检查并补齐全量样例数据（食谱/胎教/百科/周历/清单/商品/品牌）"
+        echo "  ./run.sh reconfig            交互式重新配置数据库存储方式（并自动更新 .env）"
         echo "  ./run.sh help                查看帮助"
         echo ""
         echo "常用自定义选项（支持在 start / restart / add_nginx 时追加，自动持久化至 .env）："
@@ -407,14 +413,22 @@ case "$CMD" in
         echo "  -P, --password <PASS>        自定义超级管理员登录密码（默认 admin123）"
         echo "  -n, --nickname <NAME>        自定义管理员昵称（默认 管理员）"
         echo "  -d, --domain <DOMAIN>        自定义绑定的 SNI 域名（默认 mengya.local localhost）"
+        echo "  -m, --mode <MODE>            显式指定数据库模式 (sqlite | shared | dedicated)"
+        echo "  --reconfig, --reconfig-db    重新唤起数据库决策向导，交互式切换数据库存储模式"
+        echo "  --shared-pg <CONTAINER>      指定共享模式下的宿主机 PostgreSQL 容器名称"
+        echo "  -y, --yes                    非交互式模式，免去任何等待（Cron / 重启自动采用推荐值）"
         echo ""
         echo "实用启动示例："
         echo "  ./run.sh start                                 # 默认启动（端口 5173，管理员 admin / admin123）"
         echo "  ./run.sh start -p 5175                         # 自定义以 5175 端口启动"
+        echo "  ./run.sh start --reconfig                      # 重新选择数据库模式（SQLite / 共享PG / 独立PG）"
+        echo "  ./run.sh start -m sqlite                       # 直接以 SQLite 本地单文件模式启动并保存至 .env"
+        echo "  ./run.sh start -m shared                       # 直接以共享宿主机已有 PG 模式启动并保存至 .env"
         echo "  ./run.sh start -p 5173 -u superadmin -P Pass123 # 自定义端口与管理员账密启动"
         echo "  ./run.sh restart -p 5175                       # 重启并变更为 5175 端口"
         echo "  ./run.sh add_nginx -d mengya.myhost.com        # 为指定域名生成独立反代配置"
         echo ""
+        show_db_reconfig_guide
         ;;
     *)
         echo "未知命令: $CMD"
