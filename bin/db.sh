@@ -32,8 +32,9 @@ detect_running_pg_containers() {
 }
 
 detect_best_pg_image() {
+    local default_img="${DEFAULT_PG_IMAGE:-postgres:15-alpine}"
     if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-        echo "pgvector/pgvector:pg18"
+        echo "$default_img"
         return 0
     fi
     local local_imgs
@@ -51,29 +52,27 @@ detect_best_pg_image() {
         fi
     fi
 
-    # 2. 检查本地是否存在 pgvector/pgvector:pg18
-    if echo "$local_imgs" | grep -qx "pgvector/pgvector:pg18"; then
-        echo "pgvector/pgvector:pg18"
-        return 0
+    # 2. 优先扫描服务器本地已存在的任何可用 PG 镜像（杜绝不必要的网络下载）
+    local any_pg=""
+    # 优先复用本地已有的 postgres alpine 或 postgres 官方轻量镜像
+    any_pg=$(echo "$local_imgs" | grep -E "^postgres:.*alpine" | head -n 1)
+    if [ -z "$any_pg" ]; then
+        any_pg=$(echo "$local_imgs" | grep -E "^pgvector/pgvector:" | head -n 1)
+    fi
+    if [ -z "$any_pg" ]; then
+        any_pg=$(echo "$local_imgs" | grep -E "^postgres:" | grep -v "<none>" | head -n 1)
+    fi
+    if [ -z "$any_pg" ]; then
+        any_pg=$(echo "$local_imgs" | grep -E "(postgres|pgvector)" | grep -v "<none>" | head -n 1)
     fi
 
-    # 3. 检查本地是否存在 postgres:15-alpine 或其他 alpine 镜像
-    local alpine_img
-    alpine_img=$(echo "$local_imgs" | grep -E "^postgres:.*alpine" | head -n 1)
-    if [ -n "$alpine_img" ]; then
-        echo "$alpine_img"
-        return 0
-    fi
-
-    # 4. 检查本地任何包含 postgres 或 pgvector 的镜像
-    local any_pg
-    any_pg=$(echo "$local_imgs" | grep -E "(postgres|pgvector)" | grep -v "<none>" | head -n 1)
     if [ -n "$any_pg" ]; then
         echo "$any_pg"
         return 0
     fi
 
-    echo "pgvector/pgvector:pg18"
+    # 3. 本地实在没有现存 PG 镜像时，才返回内置默认版本
+    echo "$default_img"
 }
 
 image_exists() {
@@ -85,35 +84,69 @@ image_exists() {
 }
 
 choose_db_image() {
+    local default_img="${DEFAULT_PG_IMAGE:-postgres:15-alpine}"
     if ! docker info >/dev/null 2>&1; then
-        DB_IMAGE="${DB_IMAGE:-pgvector/pgvector:pg18}"
-        DB_PULL_POLICY="${DB_PULL_POLICY:-never}"
-        export DB_IMAGE DB_PULL_POLICY
+        DB_IMAGE="${DB_IMAGE:-$default_img}"
+        DB_PULL_POLICY="${DB_PULL_POLICY:-if_not_present}"
+        DB_DATA_DIR="${DB_DATA_DIR:-/var/lib/postgresql/data}"
+        export DB_IMAGE DB_PULL_POLICY DB_DATA_DIR
+        update_env_var "DB_IMAGE" "$DB_IMAGE"
+        update_env_var "DB_PULL_POLICY" "$DB_PULL_POLICY"
+        update_env_var "DB_DATA_DIR" "$DB_DATA_DIR"
         return 0
     fi
 
+    # 1. 判断是否属于用户显式自定义镜像（命令行 -i / --db-image 传入）
+    local is_user_custom=0
     if [ -n "$CUSTOM_DB_IMAGE" ]; then
         DB_IMAGE="$CUSTOM_DB_IMAGE"
-    elif [ -z "$DB_IMAGE" ]; then
-        DB_IMAGE=$(detect_best_pg_image)
+        is_user_custom=1
     fi
 
-    if image_exists "$DB_IMAGE"; then
-        echo -e "\033[0;32m[镜像复用] 检测到本地已存在镜像 [$DB_IMAGE]，直接复用本地镜像，绝不执行远程下载（pull_policy: never）\033[0m"
-        DB_PULL_POLICY="never"
-    else
-        local alt_img
-        alt_img=$(detect_best_pg_image)
-        if [ "$alt_img" != "$DB_IMAGE" ] && image_exists "$alt_img"; then
-            echo -e "\033[0;32m[镜像复用] 指定镜像 $DB_IMAGE 本地不存在，但检测到本地已存在镜像 [$alt_img]，自动复用本地镜像，杜绝网络拉取！（pull_policy: never）\033[0m"
-            DB_IMAGE="$alt_img"
+    # 2. 用户显式自定义分支：100% 尊崇用户自定义版本，绝对禁止被其他本地旧镜像篡改覆盖
+    if [ "$is_user_custom" = "1" ]; then
+        if image_exists "$DB_IMAGE"; then
+            echo -e "\033[0;32m[镜像复用] 检测到本地已存在用户指定的自定义镜像 [$DB_IMAGE]，直接就地复用（pull_policy: never）\033[0m"
             DB_PULL_POLICY="never"
         else
-            echo -e "\033[1;33m[数据库] 本地未检测到任何可用 PG 镜像，按需拉取镜像: $DB_IMAGE\033[0m"
-            DB_PULL_POLICY="missing"
+            echo -e "\033[1;33m[镜像下载] 本地未检测到用户指定的自定义镜像 [$DB_IMAGE]，启动时将自动下载该版本（pull_policy: if_not_present）\033[0m"
+            DB_PULL_POLICY="if_not_present"
+        fi
+    else
+        # 3. 用户未显式指定：优先检测复用服务器上已存在的 PG 镜像；实在没有才自动拉取内置默认镜像
+        local detected_img
+        detected_img=$(detect_best_pg_image)
+
+        if image_exists "$detected_img"; then
+            DB_IMAGE="$detected_img"
+            DB_PULL_POLICY="never"
+            echo -e "\033[0;32m[镜像复用] 优先复用服务器已存在的 PG 镜像 [$DB_IMAGE]，零网络下载（pull_policy: never）\033[0m"
+        else
+            # 实在没有现存镜像：选用内置默认镜像并下载
+            DB_IMAGE="$default_img"
+            DB_PULL_POLICY="if_not_present"
+            echo -e "\033[1;33m[镜像下载] 服务器本地未检测到现存 PG 镜像，选用内置默认版本 [$DB_IMAGE] 并自动下载（pull_policy: if_not_present）\033[0m"
         fi
     fi
-    export DB_IMAGE DB_PULL_POLICY
+
+    # 4. 智能匹配数据卷挂载点：PostgreSQL 18+ 挂载父目录 /var/lib/postgresql；15 及更早版本兼容 /var/lib/postgresql/data
+    if [ -z "$DB_DATA_DIR" ]; then
+        case "$DB_IMAGE" in
+            *18*|*pg18*)
+                DB_DATA_DIR="/var/lib/postgresql"
+                ;;
+            *15*|*16*|*14*|*alpine*)
+                DB_DATA_DIR="/var/lib/postgresql/data"
+                ;;
+            *)
+                DB_DATA_DIR="/var/lib/postgresql/data"
+                ;;
+        esac
+    fi
+
+    export DB_IMAGE DB_PULL_POLICY DB_DATA_DIR
+    update_env_var "DB_IMAGE" "$DB_IMAGE"
+    update_env_var "DB_PULL_POLICY" "$DB_PULL_POLICY"
 }
 
 choose_db_mode() {
@@ -229,8 +262,30 @@ setup_db_for_mode() {
             local running_pg
             running_pg=$(detect_running_pg_containers | head -n 1)
             if [ -z "$SHARED_PG_CONTAINER" ]; then
-                SHARED_PG_CONTAINER="${running_pg:-pgvector-18}"
+                SHARED_PG_CONTAINER="$running_pg"
             fi
+
+            # 若未找到运行中的 PG 容器，尝试检查已停止的 PG 容器并尝试唤醒自愈
+            if [ -z "$SHARED_PG_CONTAINER" ]; then
+                local stopped_c
+                stopped_c=$(docker ps -a --filter "status=exited" --format '{{.Names}}\t{{.Image}}' 2>/dev/null | grep -E "postgres|pgvector" | head -n 1 | awk '{print $1}')
+                if [ -n "$stopped_c" ]; then
+                    echo -e "\033[1;33m[共享模式自愈] 检测到已停止的 PG 容器 [$stopped_c]，正在自动启动...\033[0m"
+                    docker start "$stopped_c" >/dev/null 2>&1 || true
+                    SHARED_PG_CONTAINER="$stopped_c"
+                fi
+            fi
+
+            if [ -z "$SHARED_PG_CONTAINER" ]; then
+                echo -e "\033[1;31m[错误] 宿主机未检测到任何正在运行的 PostgreSQL 容器，无法进行共享连接！\033[0m"
+                echo "       请先启动宿主机 PG 容器或通过 --shared-pg <容器名> 显式指定；"
+                echo -e "\033[1;33m[智能降级] 系统已自动安全切换为传统版推荐的 [1] SQLite 本地单文件模式...\033[0m"
+                DB_MODE="sqlite"
+                update_env_var "DB_MODE" "sqlite"
+                setup_db_for_mode
+                return 0
+            fi
+
             export SHARED_PG_CONTAINER
             update_env_var "SHARED_PG_CONTAINER" "$SHARED_PG_CONTAINER"
 
@@ -286,7 +341,7 @@ setup_db_for_mode() {
                         -e POSTGRES_DB="$pg_db" \
                         -e POSTGRES_USER="$pg_user" \
                         -e POSTGRES_PASSWORD="$pg_pass" \
-                        -v "${app_name}_pgdata:/var/lib/postgresql" \
+                        -v "${app_name}_pgdata:${DB_DATA_DIR:-/var/lib/postgresql/data}" \
                         --restart unless-stopped \
                         "$DB_IMAGE" \
                         postgres -c shared_buffers=24MB -c work_mem=1MB -c max_connections=20 >/dev/null 2>&1 || true
