@@ -690,3 +690,17 @@ done
 
 所有参数均自动幂等写入当前目录 `.env`，并在服务启动或重启时组装为标准 `DATABASE_URL`，同时保障传统版默认 SQLite 模式下与 Docker 版本的 100% 物理隔离。
 
+### 10.9 run.sh 脚本模块化拆分与自定义变量独立解耦规范 (v1.46)
+
+#### 10.9.1 微内核启动器重构
+为提升传统版本运维脚本的可读性与工程维护性，系统将 `run.sh` 重构为**轻量级微内核调度器**：
+1. **体积与行数极致瘦身**：`run.sh` 脚本由原来的 530+ 行精简至 120 行左右，只负责环境引导、模块动态遍历载入（`for mod in env config python process db nginx data help; do ...`）以及最终子命令的极简调度分发；
+2. **生命周期高内聚下沉**：将 `start_backend()`, `start_service()`, `restart_service()`, `show_status()` 全部下沉归集至 `bin/process.sh`，使 `process.sh` 成为统一的本地多进程生命周期管理管家；
+3. **帮助系统独立收口**：将长篇帮助说明文档、参数说明与典型启动示例迁移至独立模块 `bin/help.sh`（`show_cli_help()` 函数），彻底移除主脚本冗余代码。
+
+#### 10.9.2 自定义变量与配置解析独立模块 (`bin/config.sh`)
+将传统版本所有自定义变量、参数解析与持久化逻辑独立抽离并封装至 `bin/config.sh`：
+- **`init_default_configs()`**：声明并统一初始化本地端口（`PORT`, `FRONTEND_PORT`，默认 5173）、超级管理员账密（`ADMIN_USERNAME`, `ADMIN_PASSWORD` 等）、SNI 匹配域名、Nginx 路径、PID 与日志文件路径以及全套数据库连接参数；
+- **`parse_cli_args "$@"`**：专职承接所有命令行参数循环解析（包括 `-p`, `-u`, `-P`, `-d`, `-m`, `--db-*`, `--reconfig`, `-y` 等）；
+- **`apply_and_save_configs()`**：对用户显式传入的自定义参数进行校验，并自动调用 `update_env_var` 持久化同步写入 `.env` 文件；
+- **`export_runtime_vars()`**：统一向后置运行环境导出 Django 运行时所需的核心环境变量。

@@ -1284,6 +1284,17 @@ apps/core/                                    apps/core/
   </ul>
 </div>
 
+
+<div style="margin-top:24px;padding:18px 24px;border-radius:8px;border-left:4px solid #10b981;background:var(--bg-card, #fff);">
+  <h3 style="margin-top:0;color:#10b981;">run.sh 脚本模块化拆分与自定义变量独立解耦规范 (v1.46)</h3>
+  <p>针对运维脚本代码膨胀与高耦合问题，全面重构为轻量级微内核调度器：</p>
+  <ul>
+    <li><strong>微内核微型化架构</strong>：<code>run.sh</code> 行数缩减 75%~80%，专职环境引导与模块动态分发；</li>
+    <li><strong>独立自定义变量模块 (<code>bin/config.sh</code>)</strong>：全量收拢端口、管理员账密、域名与数据库连接参数解析、默认值声明与 <code>.env</code> 自动持久化；</li>
+    <li><strong>生命周期管理收归</strong>：Docker 集群收归 <code>bin/docker.sh</code>，传统进程管理收归 <code>bin/process.sh</code>；</li>
+    <li><strong>统一帮助文档隔离 (<code>bin/help.sh</code>)</strong>：完全剥离长文本帮助输出与实例展示，保障主流程极简清爽。</li>
+  </ul>
+</div>
 </body>
 </html>
 
