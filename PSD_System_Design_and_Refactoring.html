@@ -1307,6 +1307,17 @@ apps/core/                                    apps/core/
   </ul>
 </div>
 
+
+<div style="background:#f8fafc;border-left:4px solid #10b981;padding:16px 20px;margin-top:20px;border-radius:4px;">
+  <h3 style="margin-top:0;color:#059669;">传统模式专属 PG 容器联动终止与 unless-stopped 重启策略规范 (v1.48)</h3>
+  <p>解决传统模式使用 PG 启动后执行程序停止时后台数据库容器残留的问题，并统一规范重启策略：</p>
+  <ul>
+    <li><strong>程序停机联动终止 (<code>stop_db_container</code>)</strong>：<code>./run.sh stop</code> 联动停止专属 PG 容器（<code>${APP_NAME}-pg</code>），杜绝后台孤立容器残留；</li>
+    <li><strong>共享模式安全边界</strong>：仅定向终止本应用独立专属容器，严禁误伤宿主机共享 PG 实例；</li>
+    <li><strong>重启策略全面纠偏至 <code>unless-stopped</code></strong>：Compose 编排与 Docker CLI 禁用 <code>always</code>，并针对存量容器执行 <code>docker update --restart unless-stopped</code> 动态纠偏。</li>
+  </ul>
+</div>
+
 </body>
 </html>
 

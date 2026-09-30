@@ -365,6 +365,7 @@ setup_db_for_mode() {
 
             if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
                 if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$DB_CONTAINER_NAME"; then
+                    docker update --restart unless-stopped "$DB_CONTAINER_NAME" >/dev/null 2>&1 || true
                     if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$DB_CONTAINER_NAME"; then
                         echo "  启动已有独立 PG 容器 $DB_CONTAINER_NAME..."
                         docker start "$DB_CONTAINER_NAME" >/dev/null 2>&1 || true
@@ -396,6 +397,20 @@ setup_db_for_mode() {
             update_env_var "DATABASE_URL" "$DATABASE_URL"
             ;;
     esac
+}
+
+
+stop_db_container() {
+    local db_container="$DB_CONTAINER_NAME"
+    [ -z "$db_container" ] && db_container="${APP_NAME:-mengya_local}-pg"
+
+    if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$db_container"; then
+            echo "  ==> 停止专属 PostgreSQL 数据库容器 ($db_container)..."
+            docker stop "$db_container" >/dev/null 2>&1 || true
+            echo "  专属 PostgreSQL 数据库容器 ($db_container) 已停止"
+        fi
+    fi
 }
 
 show_db_reconfig_guide() {

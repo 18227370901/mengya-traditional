@@ -734,3 +734,20 @@ done
 - `DATABASE_URL`：标准数据库连接串（支持在此直接显式定义，或留空由系统自动按参数标准组装）；
 - `SQLITE_PATH`：SQLite 模式数据持久化路径（默认 `$BACKEND_DIR/db.sqlite3`）；
 - `USE_POSTGRES`：是否启用 PostgreSQL 引擎（默认 `False`，启用 PG 模式时自动置为 `True`）。
+
+### 10.11 传统模式专属 PG 容器生命周期联动终止与 unless-stopped 重启策略规范 (v1.48)
+
+#### 10.11.1 传统模式数据库容器未终止问题与生命周期联动
+此前在传统部署版本（`mengya-local`）中，当用户选用独立专属 PostgreSQL 模式（`dedicated`）时，启动脚本会拉起容器 `${APP_NAME}-pg`（如 `mengya_local-pg`）。但在执行 `./run.sh stop` 时，由于仅查杀终止了本地 Django 后端 Python 进程，未触及 Docker 容器，导致数据库容器一直残留在后台运行。
+
+为此，系统确立了**传统模式数据库容器生命周期联动机制**：
+1. **新增容器下线感知函数 (`bin/db.sh` -> `stop_db_container`)**：
+   通过 Docker 管理指令安全探查当前应用专属的独立 PG 容器是否运行。若存在，执行 `docker stop "$DB_CONTAINER_NAME"` 进行平滑停止；
+2. **停止流全面打通 (`bin/process.sh` -> `stop_all`)**：
+   在停止本地 Django 服务的同时，联动执行 `stop_db_container`，实现程序停止时本地进程与关联数据库容器的一键完全终止；
+3. **共享模式安全隔离**：
+   在 `shared` 模式下严格保持边界，不触碰宿主机其他系统共用的已有 PG 实例。
+
+#### 10.11.2 重启策略纠偏至 unless-stopped
+- **避免 `always` 策略失控**：初次创建专属 PG 容器时保持 `--restart unless-stopped`；
+- **存量容器动态纠偏**：在唤醒已有专属 PG 容器前，自动调用 `docker update --restart unless-stopped "$DB_CONTAINER_NAME"`，将历史可能配置为 `always` 的存量容器无缝纠正为标准 `unless-stopped` 策略。

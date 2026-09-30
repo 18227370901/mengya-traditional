@@ -654,3 +654,9 @@ mengya-local/
 | `DATABASE_URL` | `""` | 完整数据库连接串（支持直接指定或由脚本自动拼装） |
 | `SQLITE_PATH` | `$BACKEND_DIR/db.sqlite3` | SQLite 单文件存储路径 |
 | `USE_POSTGRES` | `False` | 是否启用 PostgreSQL 引擎开关 |
+
+### 11. 传统模式专属 PG 容器联动终止与 unless-stopped 规范 (v1.48)
+- **停止命令联动终止专属 PG 容器**：
+  在执行 `./run.sh stop` 时，不仅终止本地 Django 一体化进程，同时自动联动检测并执行 `docker stop ${DB_CONTAINER_NAME}` 终止专属 PG 容器（如 `mengya_local-pg`），彻底解决传统模式停止后后台仍有数据库容器残留的问题；
+- **全域重启策略锁定 `unless-stopped`**：
+  在创建专属 PG 容器时指定 `--restart unless-stopped`；在唤醒已有容器时通过 `docker update --restart unless-stopped` 自动对历史存量容器进行纠偏，杜绝系统重启时容器意外自启。

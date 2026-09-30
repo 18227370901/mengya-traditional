@@ -170,6 +170,7 @@ stop_all() {
     echo "==> 停止本地服务"
     stop_service "$(get_backend_pid)" "Django 一体化服务" "$BACKEND_PID_FILE" "$FRONTEND_PORT" "manage.py runserver 0.0.0.0:$FRONTEND_PORT"
     rm -f "$FRONTEND_PID_FILE"
+    stop_db_container
     echo "  本地服务停止操作完成"
 }
 
