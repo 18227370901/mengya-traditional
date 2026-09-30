@@ -535,7 +535,7 @@ apps/core/                                    apps/core/
 | 维度 | 传统本地模式 (`mengya-local`) | Docker 容器模式 (`mengya-docker`) |
 | :--- | :--- | :--- |
 | **存储介质与引擎** | **本地独立单文件 SQLite 3** | **PostgreSQL 18 (内置 pgvector)** |
-| **物理存储路径** | `mengya-local/db.sqlite3` | Docker 命名存储卷 `pgdata` (`/var/lib/postgresql`) |
+| **物理存储路径** | `mengya-local/db.sqlite3` | Docker 命名存储卷 `mengya_docker_pgdata` (`/var/lib/postgresql/data`) |
 | **网络暴露策略** | 仅供宿主机 Python 进程直连本地文件，无网络端口 | 容器内暴露 5432 (`expose`)，**不对宿主机映射端口** |
 | **默认加载逻辑** | `USE_POSTGRES` 未显式开启时强制使用 SQLite，忽略上级环境变量 | 严格连接 Compose 内部服务 `db:5432` |
 
@@ -555,7 +555,7 @@ apps/core/                                    apps/core/
    - **资源收益**：**零额外数据库容器**，整站常驻总内存仅约 **50MB**，与 Docker 版数据 **100% 物理硬隔离**。
 2. **模式 2：共享已有 PostgreSQL 实例 (`shared`)**
    - **架构设计**：复用宿主机已在运行的 PG 容器（如 `pgvector-18`），启动时通过容器内管理接口幂等执行 `CREATE DATABASE mengya_local` 与 `CREATE USER mengya_local`。
-   - **数据隔离保障**：即使与 Docker 版共享同一个 PG 容器，传统版使用专属数据库名 `mengya_local` 与专属账号，而 Docker 版使用 `mengya` 库，实现**库级和权限级物理隔离**，互不串扰。
+   - **数据隔离保障**：即使与 Docker 版共享同一个 PG 容器，传统版使用专属数据库名 `mengya_local` 与专属账号，而 Docker 版使用 `mengya_docker` 专属库与专属账号，实现**库级和权限级物理隔离**，互不串扰。
 3. **模式 3：独立专属 PostgreSQL 容器 (`dedicated`)**
    - **架构设计**：基于 Docker 启动专属容器 `${APP_NAME:-mengya_local}-pg`，宿主机端口映射 5433（避免与宿主机 5432 冲突），应用 80MB 内核微服务精简调优。
    - **镜像策略**：严格就地复用本地已有 PG 镜像，严禁联网拉取。
@@ -751,3 +751,23 @@ done
 #### 10.11.2 重启策略纠偏至 unless-stopped
 - **避免 `always` 策略失控**：初次创建专属 PG 容器时保持 `--restart unless-stopped`；
 - **存量容器动态纠偏**：在唤醒已有专属 PG 容器前，自动调用 `docker update --restart unless-stopped "$DB_CONTAINER_NAME"`，将历史可能配置为 `always` 的存量容器无缝纠正为标准 `unless-stopped` 策略。
+
+### 10.12 双版本同机共存 6 种数据库部署组合矩阵与全维度数据隔离规范 (v1.49)
+
+#### 10.12.1 隔离设计背景与协同原则
+当同一台服务器同时部署了传统版本（`mengya-local`）与 Docker 容器化版本（`mengya-docker`）时，系统确立了**双版本全链路数据与环境隔离机制**，杜绝两版本在任何部署组合下的数据串扰、端口冲突与容器死锁：
+1. **命名空间与容器名隔离**：传统版 `APP_NAME` 锁定为 `mengya_local`，专属容器为 `mengya_local-pg`；Docker 版 `APP_NAME` 锁定为 `mengya_docker`，专属容器为 `mengya_docker-pg`；
+2. **数据库凭据隔离**：传统版默认账号/密码/库为 `mengya_local` / `mengya123` / `mengya_local`；Docker 版为 `mengya_docker` / `mengya_docker123` / `mengya_docker`；
+3. **全线容器重启策略**：双版本涉及的所有容器均锁定为 `unless-stopped`，严禁使用 `always`。
+
+#### 10.12.2 同机共存 6 种数据库部署组合矩阵
+| 组合序号 | 传统版本 (`mengya-local`) 模式 | Docker版本 (`mengya-docker`) 模式 | 传统版存储形态与物理路径 | Docker版存储形态与物理路径 | 端口与网络协同 | 数据隔离与防冲突保障机制 |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **组合 1** | **SQLite** | **SQLite** | 宿主机文件：`mengya-local/db.sqlite3` | 容器挂载目录：`mengya-docker/data/db.sqlite3` | 传统版 Web: 5173<br/>Docker Web: 5174 | 两个完全独立的 SQLite 单文件，物理路径彻底隔离，零网络与端口争抢。 |
+| **组合 2** | **SQLite** | **独立 PG (`dedicated`)** | 宿主机文件：`mengya-local/db.sqlite3` | 独立容器 `mengya_docker-pg`，数据卷 `mengya_docker_pgdata` | Docker 版内部 expose 5432（不绑定宿主机端口） | 传统版本运行在本地 SQLite，Docker 版自建专属 PG 容器，存储介质异构隔离。 |
+| **组合 3** | **SQLite** | **共享 PG (`shared`)** | 宿主机文件：`mengya-local/db.sqlite3` | 共享宿主机现有 PG 容器（如 `pgvector-18`），自建库 `mengya_docker` | 宿主机现有 PG 端口开放，Docker 后端加入网络直连 | 传统版本使用独立文件，Docker 版在已有共享 PG 实例中拥有专属数据库与账号，互不干扰。 |
+| **组合 4** | **独立 PG (`dedicated`)** | **SQLite** | 宿主机专有容器 `mengya_local-pg`，数据卷 `mengya_local_pgdata` | 容器挂载目录：`mengya-docker/data/db.sqlite3` | 传统版独占宿主机 5432 端口，Docker 版 SQLite 零端口依赖 | 传统版独占专属 PG 容器，Docker 版完全跑在内嵌 SQLite 文件中，数据与连接完全解耦。 |
+| **组合 5** | **独立 PG (`dedicated`)** | **独立 PG (`dedicated`)** | 宿主机专有容器 `mengya_local-pg`（用户 `mengya_local`，宿主机端口 5432） | Docker 专属容器 `mengya_docker-pg`（用户 `mengya_docker`，内部 expose 5432） | 传统版独占宿主机 5432 端口；Docker 版仅在 Compose 内部暴露 5432，**不绑定宿主机端口**，零冲突 | 容器名隔离（`mengya_local-pg` vs `mengya_docker-pg`）、数据卷隔离（`mengya_local_pgdata` vs `mengya_docker_pgdata`）、账号/库隔离（`mengya_local` vs `mengya_docker`），容器与数据双重物理隔离。 |
+| **组合 6** | **独立 PG (`dedicated`)** | **共享 PG (`shared`)** | 宿主机专有容器 `mengya_local-pg`（宿主机 5432，数据库 `mengya_local`） | 复用传统版 `mengya_local-pg` 容器，但自动创建专有库 `mengya_docker` 与专有用户 `mengya_docker` | Docker 启动脚本自动将 `mengya_local-pg` 接入 Compose 内网（`${COMPOSE_PROJECT_NAME}_net`） | 数据库级（Database-level）严格隔离。Docker 版启动脚本自动在共享实例中幂等初始化专有库 `mengya_docker` 并授予独立权限，两套版本数据表互不可见，极大节省内存。 |
+
+*(注：若两版本均选择共享第三方宿主机 PG 容器如 `pgvector-18`，传统版与 Docker 版各自持有独立数据库 `mengya_local` 与 `mengya_docker` 及独立账号，天然具备数据库级完全隔离能力。)*

@@ -1318,17 +1318,88 @@ apps/core/                                    apps/core/
   </ul>
 </div>
 
+
+<div style="background:#f8fafc;border-left:4px solid #3b82f6;padding:20px 24px;margin-top:24px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+  <h3 style="margin-top:0;color:#2563eb;font-size:18px;">双版本同机共存 6 种数据库部署组合矩阵与全维度数据隔离规范 (v1.49)</h3>
+  <p style="color:#475569;margin-bottom:12px;">确立传统版本（<code>mengya-local</code>）与 Docker 容器版本（<code>mengya-docker</code>）同机部署下的全生命周期隔离与 6 种部署组合防冲突矩阵：</p>
+  <ul style="color:#334155;line-height:1.8;margin-bottom:16px;">
+    <li><strong>命名空间与容器名隔离</strong>：传统版 <code>APP_NAME</code> 默认为 <code>mengya_local</code>（专属容器 <code>mengya_local-pg</code>）；Docker 版 <code>APP_NAME</code> 默认为 <code>mengya_docker</code>（专属容器 <code>mengya_docker-pg</code>），容器命名互不干扰；</li>
+    <li><strong>数据库凭据与实例名隔离</strong>：传统版默认用户/库为 <code>mengya_local</code>，Docker 版为 <code>mengya_docker</code>，无论是独立容器还是共享容器模式均具备完全专有的库和账号；</li>
+    <li><strong>容器生命周期重启策略</strong>：所有容器（<code>backend</code>、<code>redis</code>、<code>worker</code>、<code>db</code>）统一使用 <code>restart: unless-stopped</code>，禁止使用 <code>always</code>。</li>
+  </ul>
+  <h4 style="color:#1e293b;margin:14px 0 8px 0;font-size:15px;">同机共存 6 种数据库部署组合矩阵</h4>
+  <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:13px;text-align:left;background:#ffffff;border:1px solid #cbd5e1;border-radius:6px;">
+      <thead>
+        <tr style="background:#f1f5f9;color:#1e293b;border-bottom:2px solid #cbd5e1;">
+          <th style="padding:8px 10px;border:1px solid #cbd5e1;">组合序号</th>
+          <th style="padding:8px 10px;border:1px solid #cbd5e1;">传统版 (mengya-local) 模式</th>
+          <th style="padding:8px 10px;border:1px solid #cbd5e1;">Docker版 (mengya-docker) 模式</th>
+          <th style="padding:8px 10px;border:1px solid #cbd5e1;">传统版存储与路径</th>
+          <th style="padding:8px 10px;border:1px solid #cbd5e1;">Docker版存储与路径</th>
+          <th style="padding:8px 10px;border:1px solid #cbd5e1;">端口协同</th>
+          <th style="padding:8px 10px;border:1px solid #cbd5e1;">隔离保障机制</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:bold;">组合 1</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">SQLite</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">SQLite</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">宿主机文件: mengya-local/db.sqlite3</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">容器挂载: mengya-docker/data/db.sqlite3</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">5173 vs 5174</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">单文件存储物理隔离，零端口冲突</td>
+        </tr>
+        <tr style="background:#f8fafc;">
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:bold;">组合 2</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">SQLite</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">独立 PG (dedicated)</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">宿主机文件: mengya-local/db.sqlite3</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">专属容器 mengya_docker-pg (数据卷 mengya_docker_pgdata)</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">Docker expose 5432 不占宿主端口</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">本地文件 vs 容器化 PG，介质完全异构隔离</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:bold;">组合 3</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">SQLite</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">共享 PG (shared)</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">宿主机文件: mengya-local/db.sqlite3</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">共享 PG 容器 (库名 mengya_docker)</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">Docker 加入网络直连</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">本地文件 vs 共享 PG 专有库，互不干扰</td>
+        </tr>
+        <tr style="background:#f8fafc;">
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:bold;">组合 4</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">独立 PG (dedicated)</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">SQLite</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">专属容器 mengya_local-pg (数据卷 mengya_local_pgdata)</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">容器挂载: mengya-docker/data/db.sqlite3</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">传统版占 5432，Docker 零端口依赖</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">传统专属 PG vs Docker 独立 SQLite，介质解耦</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:bold;">组合 5</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">独立 PG (dedicated)</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">独立 PG (dedicated)</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">专属容器 mengya_local-pg (用户 mengya_local)</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">专属容器 mengya_docker-pg (用户 mengya_docker)</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">传统版占 5432，Docker expose 5432 零冲突</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">容器名、数据卷、账号、库名全面隔离</td>
+        </tr>
+        <tr style="background:#f8fafc;">
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;font-weight:bold;">组合 6</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">独立 PG (dedicated)</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">共享 PG (shared)</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">专属容器 mengya_local-pg (数据库 mengya_local)</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">复用 mengya_local-pg，独占数据库 mengya_docker</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">自动 connect 接入 Compose 内网</td>
+          <td style="padding:8px 10px;border:1px solid #cbd5e1;">数据库级严格隔离，专有用户与权限，表互不可见</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
 </body>
 </html>
-
-
-#### 3. 黑夜/白天双主题切换与自适应渲染体系 (`frontend/src/store/themeStore.ts`, `tailwind.config.js`)
-- **双主题架构规范**：开启 Tailwind CSS `darkMode: 'class'`，通过根节点 `<html>` 的 `.dark` 类驱动全站样式自适应。
-- **状态原子化与持久化**：采用 Zustand `useThemeStore` 状态机管理 `theme` 与 `isDark`，自动双向同步持久化至 `localStorage('mengya_theme')`，实现毫秒级平滑响应。
-- **FOUT 白屏闪烁消除机制**：在 `index.html` 首部注入微型原生 IIFE 脚本，在首屏 DOM 树初次渲染前先行读取偏好并挂载 `dark` 类，彻底杜绝冷启动与页面刷新时的视觉跳变。
-- **全表单控件与输入框双层深色兜底**：
-  - 覆盖全站 22 个文件、138+ 处 `<input>`, `<textarea>`, `<select>` 表单元素；
-  - 在 `src/index.css` 为 `.input` 类与原生表单标签提供系统级深色兜底（`dark:bg-gray-800`, `dark:text-gray-100`, `dark:border-gray-700`，`color-scheme: dark`）；
-  - 针对原生 `<select>` 下拉菜单，强制设定暗色 option 背景，消除移动端与桌面端原生下拉弹层的白底冲突。
-- **动态图表深浅自适应**：ECharts 生长曲线图（`GrowthChart`）与多品对比雷达图（`ComparisonRadar`）监听 `useThemeStore`，实时平滑适配背景分割区、坐标轴与 Tooltip 配色。
-- **三维切换入口覆盖**：全局主布局顶栏（`MainLayout`）Sun/Moon 切换按钮、独立认证页（`LoginPage` / `RegisterPage`）右上角悬浮按钮、个人中心（`ProfilePage`）“界面外观”设置卡片。
