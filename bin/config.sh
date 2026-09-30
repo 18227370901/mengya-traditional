@@ -15,6 +15,7 @@ init_default_configs() {
     BACKEND_PORT="${FRONTEND_PORT}"
 
     ADMIN_USERNAME="${ADMIN_USERNAME:-${ADMIN_PHONE:-admin}}"
+    ADMIN_PHONE="${ADMIN_PHONE:-$ADMIN_USERNAME}"
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin123}"
     ADMIN_NICKNAME="${ADMIN_NICKNAME:-管理员}"
 
@@ -41,6 +42,27 @@ init_default_configs() {
     [ -d "$LOG_DIR" ] || mkdir -p "$LOG_DIR"
     [ -d "$PID_DIR" ] || mkdir -p "$PID_DIR"
 
+    # ============================================================
+    # 数据库与存储相关全量自定义变量声明（统一集中收拢于此）
+    # 优先级规则：CLI 命令行参数 > .env 持久化配置 > 此处代码级默认值
+    # 用户可在此一站式定义所有数据库默认参数
+    # ============================================================
+    APP_NAME="${APP_NAME:-mengya_local}"
+    DB_MODE="${DB_MODE:-sqlite}"                        # 传统版默认采用本地 SQLite 单文件
+    DEFAULT_PG_IMAGE="${DEFAULT_PG_IMAGE:-postgres:15-alpine}" # 内置默认 PG 镜像（本地无现存镜像时自动拉取）
+    DB_IMAGE="${DB_IMAGE:-}"                           # 指定 PG 镜像（为空时智能探针优先复用本地已有镜像）
+    DB_PULL_POLICY="${DB_PULL_POLICY:-if_not_present}" # 镜像拉取策略: never | if_not_present
+    DB_DATA_DIR="${DB_DATA_DIR:-/var/lib/postgresql/data}" # PG 容器数据挂载目录
+    DB_CONTAINER_NAME="${DB_CONTAINER_NAME:-${APP_NAME}-pg}" # 独立 PG 模式下的容器名
+    SHARED_PG_CONTAINER="${SHARED_PG_CONTAINER:-}"     # 共享 PG 模式下的目标容器名（为空时探针自适应发现）
+    POSTGRES_USER="${POSTGRES_USER:-mengya_local}"     # PostgreSQL 用户名
+    POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-mengya123}" # PostgreSQL 密码
+    POSTGRES_DB="${POSTGRES_DB:-mengya_local}"         # PostgreSQL 数据库名/实例名
+    POSTGRES_PORT="${POSTGRES_PORT:-5432}"             # PostgreSQL 连接端口
+    POSTGRES_HOST="${POSTGRES_HOST:-127.0.0.1}"        # PostgreSQL 主机地址
+    DATABASE_URL="${DATABASE_URL:-}"                   # 完整数据库连接串（支持在此直接定义或留空由脚本自动拼装）
+    SQLITE_PATH="${SQLITE_PATH:-$BACKEND_DIR/db.sqlite3}" # SQLite 本地文件持久化路径
+    USE_POSTGRES="${USE_POSTGRES:-False}"              # 是否启用 PostgreSQL（sqlite 模式为 False）
 
     CMD=""
     CUSTOM_PORT=""
@@ -48,6 +70,9 @@ init_default_configs() {
     CUSTOM_ADMIN_PASS=""
     CUSTOM_ADMIN_NICK=""
     CUSTOM_DOMAIN=""
+    CUSTOM_DB_IMAGE=""
+    CUSTOM_DB_MODE=""
+    CUSTOM_SHARED_PG=""
     CUSTOM_DB_USER=""
     CUSTOM_DB_PASS=""
     CUSTOM_DB_NAME=""
@@ -70,6 +95,10 @@ while [ $# -gt 0 ]; do
                 EXTRA_ARGS="${EXTRA_ARGS:+$EXTRA_ARGS }$1"
             fi
             shift
+            ;;
+        --image|--db-image)
+            CUSTOM_DB_IMAGE="$2"
+            shift 2
             ;;
         -m|--mode|--db-mode)
             CUSTOM_DB_MODE="$2"
@@ -154,11 +183,16 @@ if [ -z "$CMD" ]; then
         CMD="help"
     fi
 fi
-
 }
 
 apply_and_save_configs() {
 # 应用自定义参数并持久化至 .env
+if [ -n "$CUSTOM_DB_IMAGE" ]; then
+    DB_IMAGE="$CUSTOM_DB_IMAGE"
+    update_env_var "DB_IMAGE" "$CUSTOM_DB_IMAGE"
+    echo -e "\033[0;32m[配置] 数据库镜像已指定为: $CUSTOM_DB_IMAGE (已同步至 .env)\033[0m"
+fi
+
 if [ -n "$CUSTOM_DB_MODE" ]; then
     DB_MODE="$CUSTOM_DB_MODE"
     update_env_var "DB_MODE" "$CUSTOM_DB_MODE"
@@ -209,6 +243,7 @@ fi
 
 if [ -n "$CUSTOM_PORT" ]; then
     FRONTEND_PORT="$CUSTOM_PORT"
+    BACKEND_PORT="$CUSTOM_PORT"
     update_env_var "FRONTEND_PORT" "$CUSTOM_PORT"
     echo -e "\033[0;32m[配置] 前端访问端口已设置为: $CUSTOM_PORT (已同步至 .env)\033[0m"
 fi
@@ -237,34 +272,48 @@ if [ -n "$CUSTOM_DOMAIN" ]; then
     update_env_var "SERVER_NAME" "$SERVER_NAME"
     echo -e "\033[0;32m[配置] SNI 匹配域名已设置为: $SERVER_NAME (已同步至 .env)\033[0m"
 fi
-
 }
 
 export_runtime_vars() {
-export FRONTEND_PORT
-export ADMIN_USERNAME
-export ADMIN_PHONE
-export ADMIN_PASSWORD
-export ADMIN_NICKNAME
-export SERVER_NAME
-export EXTERNAL_PORT
-export DB_MODE
-export APP_NAME
-export SHARED_PG_CONTAINER
-export RECONFIG_DB
-export NON_INTERACTIVE
-export POSTGRES_USER
-export POSTGRES_PASSWORD
-export POSTGRES_DB
-export POSTGRES_PORT
-export POSTGRES_HOST
-export DATABASE_URL
-export CUSTOM_DB_USER
-export CUSTOM_DB_PASS
-export CUSTOM_DB_NAME
-export CUSTOM_DB_PORT
-export CUSTOM_DB_HOST
-export CUSTOM_DATABASE_URL
+    export FRONTEND_PORT
+    export BACKEND_PORT
+    export ADMIN_USERNAME
+    export ADMIN_PHONE
+    export ADMIN_PASSWORD
+    export ADMIN_NICKNAME
+    export SERVER_NAME
+    export EXTERNAL_PORT
+
+    # 数据库与存储全量运行时变量导出
+    export APP_NAME
+    export DB_MODE
+    export DEFAULT_PG_IMAGE
+    export DB_IMAGE
+    export DB_PULL_POLICY
+    export DB_DATA_DIR
+    export DB_CONTAINER_NAME
+    export SHARED_PG_CONTAINER
+    export POSTGRES_USER
+    export POSTGRES_PASSWORD
+    export POSTGRES_DB
+    export POSTGRES_PORT
+    export POSTGRES_HOST
+    export DATABASE_URL
+    export SQLITE_PATH
+    export USE_POSTGRES
+    export RECONFIG_DB
+    export NON_INTERACTIVE
+
+    # CLI 自定义覆盖暂存变量
+    export CUSTOM_DB_IMAGE
+    export CUSTOM_DB_MODE
+    export CUSTOM_SHARED_PG
+    export CUSTOM_DB_USER
+    export CUSTOM_DB_PASS
+    export CUSTOM_DB_NAME
+    export CUSTOM_DB_PORT
+    export CUSTOM_DB_HOST
+    export CUSTOM_DATABASE_URL
 
     export EXTRA_ARGS
     export CMD

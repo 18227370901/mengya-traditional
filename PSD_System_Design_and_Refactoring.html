@@ -1295,6 +1295,18 @@ apps/core/                                    apps/core/
     <li><strong>统一帮助文档隔离 (<code>bin/help.sh</code>)</strong>：完全剥离长文本帮助输出与实例展示，保障主流程极简清爽。</li>
   </ul>
 </div>
+
+<div style="background:#f8fafc;border-left:4px solid #3b82f6;padding:16px 20px;margin-top:20px;border-radius:4px;">
+  <h3 style="margin-top:0;color:#2563eb;">数据库全量变量集中归集于 config.sh 治理规范 (v1.47)</h3>
+  <p>针对此前数据库配置参数分散在多个脚本以及存在重复硬编码后备的问题，确立集中归集规范：</p>
+  <ul>
+    <li><strong>单点集中声明 (<code>bin/config.sh</code>)</strong>：全量收拢 <code>APP_NAME</code>、<code>DB_MODE</code>、<code>POSTGRES_*</code> 账密与端口、<code>DATABASE_URL</code>、<code>SQLITE_PATH</code> 等全套变量；</li>
+    <li><strong>三级优先级保障</strong>：严格遵从 <code>CLI 显式参数</code> &gt; <code>.env 本地持久化</code> &gt; <code>config.sh 默认定义</code>；</li>
+    <li><strong>消除跨模块冗余 Fallback</strong>：<code>bin/db.sh</code> 与 <code>bin/process.sh</code> 彻底清理 <code>:-mengya_local</code> 等重复后备值，直接消费规范变量；</li>
+    <li><strong>双版本隔离无虞</strong>：传统版继续默认严格保持本地单文件 SQLite 独立存储，与 Docker 版本 100% 物理硬隔离。</li>
+  </ul>
+</div>
+
 </body>
 </html>
 

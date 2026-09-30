@@ -21,7 +21,8 @@ show_cli_help() {
         echo "  -P, --password <PASS>        自定义超级管理员登录密码（默认 admin123）"
         echo "  -n, --nickname <NAME>        自定义管理员昵称（默认 管理员）"
         echo "  -d, --domain <DOMAIN>        自定义绑定的 SNI 域名（默认 mengya.local localhost）"
-        echo "  -m, --mode <MODE>            显式指定数据库模式 (sqlite | shared | dedicated)"
+        echo "  --db-image <IMAGE>           指定数据库镜像（如 pgvector/pgvector:pg18 或 postgres:15-alpine）
+  -m, --mode <MODE>            显式指定数据库模式 (sqlite | shared | dedicated)"
         echo "  --reconfig, --reconfig-db    重新唤起数据库决策向导，交互式切换数据库存储模式
   --db-user <USER>             自定义 PostgreSQL 用户名（默认 mengya_local）
   --db-pass <PASS>             自定义 PostgreSQL 密码（默认 mengya123）

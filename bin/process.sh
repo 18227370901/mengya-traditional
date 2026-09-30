@@ -289,11 +289,11 @@ show_status() {
     echo "  外部访问端口     : $EXTERNAL_PORT (SNI 域名: $SERVER_NAME)"
     print_access_urls "统一访问入口" "$EXTERNAL_PORT"
     echo "  本地直连入口     : http://127.0.0.1:$FRONTEND_PORT/"
-    echo "  数据库存储模式   : ${DB_MODE:-sqlite}"
-    if [ "${DB_MODE:-sqlite}" = "sqlite" ]; then
+    echo "  数据库存储模式   : $DB_MODE"
+    if [ "$DB_MODE" = "sqlite" ]; then
         echo "  数据库物理文件   : $SCRIPT_DIR/db.sqlite3 [与 Docker 版 100% 物理隔离]"
     elif [ "$DB_MODE" = "shared" ]; then
-        echo "  共享 PG 容器     : ${SHARED_PG_CONTAINER:-pgvector-18} (专属库: ${POSTGRES_DB:-mengya_local})"
+        echo "  共享 PG 容器     : $SHARED_PG_CONTAINER (专属库: $POSTGRES_DB)"
         echo "  数据库连接       : $DATABASE_URL"
     else
         echo "  独立 PG 容器     : ${APP_NAME:-mengya_local}-pg"
