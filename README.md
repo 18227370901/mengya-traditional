@@ -576,3 +576,31 @@ mengya-local/
 - 彻底剔除历史兜底的 `pgvector-18` 硬编码容器名；
 - 优先支持用户通过 `--shared-pg <容器名>` 或 `SHARED_PG_CONTAINER` 显式指定；
 - 未指定时自动扫描宿主机运行中 PG 容器；若宿主机未检测到可用 PG 容器，给出清晰诊断并自动平滑降级为独立 PG / SQLite 模式，杜绝进程因盲连不存在容器而崩溃。
+
+### 8. 数据库全参连接信息自定义与 --reconfig 交互向导修复规范 (v1.45)
+
+#### 8.1 --reconfig 交互式向导唤起机制
+- **直接执行重配**：支持运行 `./run.sh --reconfig` 或 `./run.sh reconfig`，无需前置启动命令，直接唤起硬件感知与部署模式交互菜单；
+- **启动/重启时重配**：支持 `./run.sh start --reconfig` 与 `./run.sh restart --reconfig`，在启动或重启前完成数据库模式切换；
+- **定时任务免交互保障**：定时任务执行 `./run.sh restart` 或传入 `-y` 时，天然保持零交互静默执行，绝不挂起进程。
+
+#### 8.2 数据库连接全参数自定义支持（自动持久化至 .env）
+系统支持在命令行直接传递数据库详细连接参数，既有默认值，又支持自定义覆盖：
+| 命令行选项 | 对应环境变量 | 默认值（传统版） | 说明 |
+| :--- | :--- | :--- | :--- |
+| `--db-user <USER>` | `POSTGRES_USER` | `mengya_local` | 自定义 PostgreSQL 用户名 |
+| `--db-pass <PASS>` | `POSTGRES_PASSWORD` | `mengya123` | 自定义 PostgreSQL 连接密码 |
+| `--db-name <DB>` | `POSTGRES_DB` | `mengya_local` | 自定义 PostgreSQL 数据库/实例名 |
+| `--db-port <PORT>` | `POSTGRES_PORT` | `5432` 或 `5433` | 自定义 PostgreSQL 连接端口 |
+| `--db-host <HOST>` | `POSTGRES_HOST` | `127.0.0.1` | 自定义 PostgreSQL 访问主机 |
+| `--database-url <URL>` | `DATABASE_URL` | 自动标准拼装 | 直接指定完整连接串，优先采用 |
+
+示例：
+```bash
+# 自定义账号密码与端口启动（切换到指定 PG）
+./run.sh start -m dedicated --db-user local_user --db-pass MyPass123 --db-name mengya_test --db-port 5433
+
+# 直接指定完整连接串启动
+./run.sh start --database-url "postgresql://mengya_local:mengya123@127.0.0.1:5432/mengya_local"
+```
+

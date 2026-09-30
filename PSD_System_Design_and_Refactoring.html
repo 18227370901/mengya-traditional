@@ -1222,7 +1222,16 @@ apps/core/                                    apps/core/
           </ul>
         </div>
       </section>
-    </main>
+    
+    <section class="section" id="section-10-8">
+      <h2>10.8 数据库交互式重配链路修复与全参连接自定义规范 (v1.45)</h2>
+      <h3>10.8.1 架构设计背景与根因治理</h3>
+      <p>治理了 --reconfig 参数在缺省子命令时回退为 help、restart 维护命令过早返回、后台无 TTY 误伤显式交互以及传统版端口检测提早 return 的 4 重缺陷，实现交互式向导 100% 稳定唤醒。</p>
+      <h3>10.8.2 全参数连接信息自定义支持</h3>
+      <p>全面支持 --db-user、--db-pass、--db-name、--db-port、--db-host 及 --database-url 命令行参数，并自动双向持久化至 .env，满足多场景数据库配置定制需求。</p>
+    </section>
+
+</main>
   </div>
 
 <div class="card" style="margin-top:20px;border-left:4px solid #10b981;padding:16px;background:var(--bg-card, #fff);">
