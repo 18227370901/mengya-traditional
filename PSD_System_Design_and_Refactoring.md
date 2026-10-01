@@ -560,8 +560,8 @@ apps/core/                                    apps/core/
    - **架构设计**：基于 Docker 启动专属容器 `${APP_NAME:-mengya_local}-pg`，宿主机端口映射 5433（避免与宿主机 5432 冲突），应用 80MB 内核微服务精简调优。
    - **镜像策略**：严格就地复用本地已有 PG 镜像，严禁联网拉取。
 
-#### 10.3.2 严苛的本地镜像就地复用策略
-扫描链依次检索：① 运行中 PG 容器镜像；② 本地 `pgvector/pgvector:pg18`；③ 本地 `postgres:15-alpine` 等轻量镜像；④ 本地任何包含 `postgres` 的镜像。命中即直接复用，杜绝网络重复下载。
+#### 10.3.2 严苛的本地镜像就地复用策略与 PG15 默认锁定
+扫描链严禁跨界偷取宿主机其他运行容器的镜像，依次检索：① 本地已存在的内置默认镜像 `postgres:15-alpine`；② 本地兼容的官方 PG15 镜像 (`postgres:15*`)；③ 本地官方轻量 alpine 镜像 (`postgres:*alpine`)；④ 兜底返回内置默认镜像 `postgres:15-alpine`（按需自动下载，pull_policy: if_not_present）。命中本地镜像即直接复用，杜绝网络重复下载与镜像污染。
 
 #### 10.3.3 基于硬件探针与架构定位的智能推荐引擎
 - **传统版核心规则**：由于传统版定位为宿主机轻量独立运行，向导**严格优先推荐 [1] SQLite 本地化单文件**，保障与 Docker 版数据 100% 物理隔离与零配置开箱即用；
@@ -771,3 +771,20 @@ done
 | **组合 6** | **独立 PG (`dedicated`)** | **共享 PG (`shared`)** | 宿主机专有容器 `mengya_local-pg`（宿主机 5432，数据库 `mengya_local`） | 复用传统版 `mengya_local-pg` 容器，但自动创建专有库 `mengya_docker` 与专有用户 `mengya_docker` | Docker 启动脚本自动将 `mengya_local-pg` 接入 Compose 内网（`${COMPOSE_PROJECT_NAME}_net`） | 数据库级（Database-level）严格隔离。Docker 版启动脚本自动在共享实例中幂等初始化专有库 `mengya_docker` 并授予独立权限，两套版本数据表互不可见，极大节省内存。 |
 
 *(注：若两版本均选择共享第三方宿主机 PG 容器如 `pgvector-18`，传统版与 Docker 版各自持有独立数据库 `mengya_local` 与 `mengya_docker` 及独立账号，天然具备数据库级完全隔离能力。)*
+
+
+### 10.13 传统模式独立专属 PG 默认镜像锁定 (PG15) 与宿主机越界探测解耦自愈规范 (v1.50)
+
+#### 10.13.1 架构缺陷与根因剖析
+此前传统版本在选用独立专属 PostgreSQL 模式（`dedicated`）时，内置默认镜像设计为 `postgres:15-alpine`，但在实际服务器部署时却误启动了 `pgvector/pgvector:pg18` 镜像，经排查根本原因包含以下 4 环链条缺陷：
+1. **探针越界偷取镜像**：`bin/db.sh` 中的 `detect_best_pg_image()` 调用 `detect_running_pg_containers`，误将宿主机上其他正在运行的无关 PG 容器（如共存系统或共享模式的 `pgvector-18`）镜像偷取作为自身专属 PG 容器的镜像；
+2. **规则权重倒错**：本地镜像扫描逻辑优先匹配了 `^pgvector/pgvector:`，跳过了内置默认的 PG15；
+3. **默认镜像优先权被架空**：`DEFAULT_PG_IMAGE="postgres:15-alpine"` 仅在本地没有任何镜像时作为最后兜底；
+4. **`.env` 伪自定义持久化锁死**：`choose_db_image()` 无条件调用 `update_env_var "DB_IMAGE" "$DB_IMAGE"`，将探测到的 `pgvector/pgvector:pg18` 写入了 `.env`。后续启动判定 `[ -n "$DB_IMAGE" ]` 为真，误以为是用户显式指定，导致永久锁死在 `pg18`。
+
+#### 10.13.2 治理改造与技术规范
+1. **宿主机运行容器探针越界彻底解耦**：彻底移除 `detect_best_pg_image()` 中扫描宿主机其他运行容器的逻辑，独立专属容器镜像与宿主机其他容器完全隔离；
+2. **本地镜像优先级阶梯重构**：优先检查本地是否存在内置默认镜像 `postgres:15-alpine`；其次检查兼容官方 PG15 镜像 (`postgres:15*`)；再次检查官方轻量 alpine 镜像 (`postgres:*alpine`)；最后兜底返回 `postgres:15-alpine` 并按需拉取 (`if_not_present`)；
+3. **`.env` 伪自定义持久化解耦与历史残留自动纠偏**：默认模式下不向 `.env` 强行写入 `DB_IMAGE`（保持空值以始终跟随系统默认）；仅在用户通过命令行 `--db-image` (`CUSTOM_DB_IMAGE`) 显式传参时才标记为自定义并持久化；若 `.env` 残留历史误判的 `pg18`/`pgvector` 镜像且未显式指定，启动时自动进行配置纠偏清空并重置为内置默认 `postgres:15-alpine`；
+4. **专属 PG 容器与存储卷对齐自愈**：启动前检测已有容器实际镜像，若与目标镜像不一致（如历史遗留的 pg18 容器），自动停止并删除旧容器以便以新镜像重新创建；若涉及从 PG18 跨大版本切换回 PG15，自动重置不兼容旧数据卷 `${APP_NAME}_pgdata` 确保全新初始化无报错；
+5. **数据卷挂载点标准化**：统一规范为 `/var/lib/postgresql/data`。
