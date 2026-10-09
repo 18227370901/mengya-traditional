@@ -853,3 +853,22 @@ done
     3. **15秒定时静默轮询**：后台轮询拉取最新权限，实现秒级响应管理员权限撤销。
 - **后端 API 403 严格防线**：
   * 在 `RecipeViewSet`、`FetalStoryViewSet`、`TimelineViewSet` 等关键接口增加视图级权限校验，越权访问直接返回 403 Forbidden，杜绝客户端绕过 UI 抓取接口数据。
+
+### 10.15 健康中心 BMI 动态图表与 SearXNG 双通道改造体系 (v1.54)
+
+#### 10.15.1 业务背景与改造目标
+1. **健康中心缺失时序化 BMI 智能闭环**：既有 BMI 录入存在“同步存入成长记录”冗余勾选框且日期锁死当日，缺少按天补录历史数据、全时序趋势通道带、相邻/单周增量 Δkg 变色柱状图与时间跨度筛选；
+2. **食谱引擎单一来源**：仅从内部 `Recipe` 库取数，无权威联网检索兜底、无双通道数据源打标（`[平台优选: ID]` / `[外部检索: 来源]`）与孕产期禁忌食材全量扫描；
+3. **SearXNG 客户端缺乏显式配置清单与熔断机制**：需固化 `SEARXNG_*` 环境变量、0.5s 极速探针 + 快速熔断（Fast-Fail）毫秒级安全降级，并提供管理员在线配置管理。
+
+#### 10.15.2 架构设计与实现落地
+1. **零迁移复用成熟表**：测量时序打卡复用 `HealthRecord`（`record_type=prenatal_exam|growth_measurement`），`exam_items` JSONField 扩展承载 `waist_circumference / pre_weight / bmi / actual_gain / gain_status / is_twins`，零数据库迁移破坏；
+2. **后端服务层下沉**：
+   - `apps/core/services/medical_calculator.py`：WS/T 801-2022 单/双胎孕前 BMI 分级与 1~40 周推荐增重区间/中位线曲线（`curve` 契约），4 级医学预警引擎（剧吐脱水 / 子痫前期 / FGR 生长滞后 / GDM 控糖）；
+   - `apps/core/services/diet_recommendation_service.py`：双通道一日五餐（平台库 `[平台优选: ID]` ↔ SearXNG `[外部检索: 域名]` ↔ 本地《孕期膳食指南》兜底），孕囊禁忌食材全量扫描；
+   - `apps/core/services/searxng_client.py`：私有化元搜索客户端（`format=json` / `safesearch=1` / 权威健康白名单 / 0.5s 快速探测熔断 / 连通测试 / `.env` 同步持久化）。
+3. **接口契约**：
+   - `GET/POST /api/health/bmi-analysis/`：时序历史拉取 + 打卡自动持久化 + 综合评估 + 双通道食谱 + `timeseries` 全量回传；
+   - `GET/PUT /api/admin/searxng-config/` 与 `POST /api/admin/searxng-config/test/`：管理员配置查看/更新与连通性测试（仅 `is_staff`）。
+4. **前端四卡片信息流**：`BmiFormCard`（按天补录 / 腹围 / 单双胎 / 代谢病史 / 移除冗余勾选）→ `BmiTimeSeriesBoard`（趋势通道带+中位线+实测曲线；Δkg 变色柱状 + 视图切换 + 近7天/近1个月/全孕期·全产后筛选）→ `BmiHistoryTable`（历史打卡 + 删除二次确认 + 看板联动刷新）→ 医学预警 Banner + WS/T 801-2022 曲线看板 + 双通道食谱 + 运动心理关怀；
+5. **管理员 SearXNG 配置弹窗**：`SearXNGConfigModal` 挂载于 BMI 分析页头部（仅 `is_staff` 可见），支持在线查看/修改/测试连通性/同步写回 `.env` 并热刷新运行配置。

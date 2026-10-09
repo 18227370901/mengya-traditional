@@ -2005,10 +2005,59 @@ class HealthRecordViewSet(viewsets.ModelViewSet):
         instance.delete()
 
 
+def _build_bmi_timeseries(user):
+    """构建用户时序测量打卡历史（含孕前基线、累计增重与达标状态），供 BMI 图表看板与历史数据表复用"""
+    from apps.core.models.health import HealthRecord
+    timeseries_history = []
+    try:
+        user_records = HealthRecord.objects.filter(
+            user=user,
+            record_type__in=["prenatal_exam", "growth_measurement"],
+        ).exclude(weight__isnull=True).order_by("record_date", "created_at")
+        prev_w = None
+        for r in user_records:
+            delta = round(r.weight - prev_w, 2) if prev_w is not None else 0.0
+            prev_w = r.weight
+            items = r.exam_items if isinstance(r.exam_items, dict) else {}
+            w_circum = items.get("waist_circumference")
+            pre_weight = items.get("pre_weight")
+            rec_bmi = round(r.weight / ((r.height / 100.0) ** 2), 2) if (r.height and r.height > 0) else None
+            cum_gain = round(r.weight - pre_weight, 2) if (pre_weight and pre_weight > 0) else None
+            timeseries_history.append({
+                "id": r.id,
+                "record_date": str(r.record_date),
+                "record_type": r.record_type,
+                "gestational_week": r.gestational_week,
+                "height": r.height,
+                "weight": r.weight,
+                "waist_circumference": w_circum,
+                "bmi": rec_bmi,
+                "delta_kg": delta,
+                "pre_weight": pre_weight,
+                "cumulative_gain": cum_gain,
+                "gain_status": items.get("gain_status"),
+                "is_twins": bool(items.get("is_twins", False)),
+                "note": r.note,
+            })
+    except Exception:
+        pass
+    return timeseries_history
+
+
 class HealthBmiAnalysisView(APIView):
     """孕产妇体重/BMI 分析与个性化方案一键生成接口 (基于 WS/T 801-2022)"""
 
     permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        check_permission_or_403(request.user, "menu_health", "您没有访问健康中心的权限")
+        return Response({
+            "code": 0,
+            "message": "获取成功",
+            "data": {
+                "timeseries": _build_bmi_timeseries(request.user),
+            },
+        })
 
     def post(self, request):
         check_permission_or_403(request.user, "menu_health", "您没有访问健康中心的权限")
@@ -2057,22 +2106,33 @@ class HealthBmiAnalysisView(APIView):
         )
 
         created_record_id = None
-        if data.get("save_record"):
-            try:
-                rec_type = "growth_measurement" if data.get("stage_type") == "postpartum" else "prenatal_exam"
-                from apps.core.models.health import HealthRecord
-                new_rec = HealthRecord.objects.create(
-                    user=request.user,
-                    record_type=rec_type,
-                    record_date=timezone.now().date(),
-                    gestational_week=data.get("gestational_week"),
-                    height=data["height_cm"],
-                    weight=data["current_weight_kg"],
-                    note=f"孕前BMI {evaluation['bmi']} ({evaluation['category_label']}), 累计增重 {evaluation['actual_gain']}kg ({evaluation.get('gain_status_label', '')})",
-                )
-                created_record_id = new_rec.id
-            except Exception:
-                pass
+        target_date = data.get("record_date") or timezone.now().date()
+        rec_type = "growth_measurement" if data.get("stage_type") == "postpartum" else "prenatal_exam"
+        exam_items = {
+            "waist_circumference": data.get("waist_circumference_cm"),
+            "pre_weight": data["pre_pregnancy_weight_kg"],
+            "bmi": evaluation["bmi"],
+            "actual_gain": evaluation["actual_gain"],
+            "gain_status": evaluation.get("gain_status", "normal"),
+            "is_twins": bool(data.get("is_twins", False)),
+        }
+        try:
+            from apps.core.models.health import HealthRecord
+            new_rec = HealthRecord.objects.create(
+                user=request.user,
+                record_type=rec_type,
+                record_date=target_date,
+                gestational_week=data.get("gestational_week"),
+                height=data["height_cm"],
+                weight=data["current_weight_kg"],
+                exam_items=exam_items,
+                note=f"孕前BMI {evaluation['bmi']} ({evaluation['category_label']}), 累计增重 {evaluation['actual_gain']}kg ({evaluation.get('gain_status_label', '')})",
+            )
+            created_record_id = new_rec.id
+        except Exception:
+            pass
+
+        timeseries_history = _build_bmi_timeseries(request.user)
 
         audit(
             request,
@@ -2094,6 +2154,7 @@ class HealthBmiAnalysisView(APIView):
                 "lifestyle_advice": lifestyle_care,
                 "disclaimer": disclaimer,
                 "created_record_id": created_record_id,
+                "timeseries": timeseries_history,
             },
         })
 

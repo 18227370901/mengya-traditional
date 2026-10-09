@@ -714,3 +714,30 @@ mengya-local/
   * `RequireAuth.tsx` 实现路由切换防抖拉取、页面获焦（`focus`）同步与 15 秒定时静默轮询更新，确保管理员修改后用户端无感秒级生效；
 - **后端 API 403 严格防线**：
   * 孕期食谱、胎教故事、周历接口等 ViewSet 添加动态权限校验，越权访问直接返回 403 Forbidden。
+
+### 13. 健康中心 BMI 动态图表与 SearXNG 双通道改造 (v1.54)
+
+#### 13.1 健康中心「体重/BMI分析」新 Tab
+- **健康中心新增独立 Tab 入口**「体重/BMI分析」（`HealthPage` → `BmiAnalysisView`），与产检记录、生长曲线、疫苗日历、日历总览并列；
+- 四卡片信息流布局：
+  1. **测量数据录入与按天打卡**（`BmiFormCard`）：支持日历精确到天补录历史数据、阶段切换（孕期 1~42 周 / 产后 0~36 个月）、身高/孕前体重/实测体重/腹围录入、单双胎模式、GDM/高血压/剧吐/贫血/甲状腺代谢特征标签；已移除冗余“同步存入成长记录”勾选框，测量数据默认自动持久化归档至健康档案时序库（`HealthRecord`，`record_type=prenatal_exam|growth_measurement`）；
+  2. **多维度时序图表看板**（`BmiTimeSeriesBoard`）：趋势视图（WS/T 801-2022 绿色安全推荐通道带 + 中位虚线 + 橙色实测曲线）与增量视图（相邻净增重 Δkg 变色柱状图：>0.9kg 红 / >0.6kg 橙 / <-0.5kg 紫 / 达标绿，含超标阈值 0.9kg markLine）双视图切换，支持近 7 天 / 近 1 个月 / 全孕期·全产后时间跨度筛选；
+  3. **测量打卡历史数据表**（`BmiHistoryTable`）：按时间倒序展示测量日期、阶段（孕周/产后）、身高、实测体重、BMI、腹围、增量 Δkg、达标状态徽章，支持删除操作（内置二次确认，删除后看板自动联动刷新）；
+  4. **医学预警与双通道食谱方案**：医学红线预警 Banner（剧吐脱水 / 显性水肿·子痫前期 / FGR 生长滞后 / GDM 控糖）+ 国家卫健委 WS/T 801-2022 全孕期曲线看板 + 平台与 SearXNG 双通道一日五餐方案 + 运动与心理关怀卡片。
+
+#### 13.2 后端医学计算引擎与双通道食谱
+- **`apps/core/services/medical_calculator.py`**：WS/T 801-2022 单/双胎孕前 BMI 分级标准（低体重/正常/超重/肥胖）与全孕期 1~40 周推荐增重区间、中位线轨迹生成；4 级医学红线预警（剧吐脱水 `EMESIS_ALERT`、子痫前期 `PREECLAMPSIA_ALERT`、FGR 生长滞后 `FGR_DEFICIT_ALERT`、GDM 控糖 `GDM_DIET_ALERT`）；
+- **`apps/core/services/diet_recommendation_service.py`**：双通道食谱组装，通道一内部 `Recipe` 库优先打标 `[平台优选: ID]`，通道二 SearXNG 权威健康检索降级打标 `[外部检索: 域名]`，缺省本地《孕期膳食指南》容灾模板；孕产期禁忌食材全量扫描（生食/刺身/高汞鱼/活血药材等黑名单）；
+- **接口**：`POST /api/health/bmi-analysis/`（打卡录入 + 自动持久化 + 综合评估 + 双通道食谱 + 时序返回），`GET /api/health/bmi-analysis/`（拉取用户全时序测量历史）；管理员接口 `GET/PUT /api/admin/searxng-config/` 与 `POST /api/admin/searxng-config/test/`。
+
+#### 13.3 SearXNG 私有化搜索引擎双通道接入
+- **环境变量**（`.env` / `.env.example` / `config/settings.py` 三方固化）：
+  | 变量 | 默认值 | 说明 |
+  | :--- | :--- | :--- |
+  | `SEARXNG_BASE_URL` | `http://127.0.0.1:8888` | 私有 SearXNG 实例地址 |
+  | `SEARXNG_TIMEOUT` | `4.0` | 请求超时（秒），熔断降级 |
+  | `SEARXNG_FORMAT` | `json` | 搜索格式（强制 json） |
+  | `SEARXNG_ENGINES` | 空 | 指定引擎，留空用实例默认 |
+  | `SEARXNG_HEALTH_DOMAINS` | 卫健委/营养学会等 7 个权威域名 | 权威健康白名单过滤 |
+- **`apps/core/services/searxng_client.py`**：0.5s 快速探测 + 毫秒级熔断安全降级（离线绝不阻塞用户请求）、HTML 实体/垃圾词清洗、权威域名 site: 过滤、连通性测试与 `.env` 同步持久化；
+- **前端管理员入口**：健康中心 BMI 分析页头部「SearXNG 引擎配置」弹窗（`SearXNGConfigModal`），支持在线查看/修改/测试连通性/同步写回 `.env`（仅 `is_staff` 管理员可见）。

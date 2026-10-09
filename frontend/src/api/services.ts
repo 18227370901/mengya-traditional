@@ -1,6 +1,6 @@
 import api from "./client";
 import type { ApiResponse, ChatSessionDetail, ChatSessionSummary, HealthRecord, ShoppingList, ShoppingListItem, AIChatResult, BabyShoppingListResponse, BabyShoppingCategories, AIRecommendResult } from "@/types";
-import type { BmiAnalysisInput, BmiAnalysisResult } from "@/types/health";
+import type { BmiAnalysisInput, BmiAnalysisResult, BmiTimeSeriesRecord, SearXNGConfig, SearXNGTestResult } from "@/types/health";
 export const shoppingApi = {
   list: () => api.get<ApiResponse<ShoppingList[]>>("/shopping-lists/").then((r) => r.data.data),
 
@@ -39,6 +39,14 @@ export const babyShoppingApi = {
     api.post<ApiResponse<AIRecommendResult>>("/baby-shopping/ai_recommend/", data, { timeout: 90000 }).then((r) => r.data.data),
 };
 
+export const searxngConfigApi = {
+  get: () => api.get<ApiResponse<SearXNGConfig>>("/admin/searxng-config/").then((r) => r.data.data),
+  update: (data: Partial<SearXNGConfig>) =>
+    api.put<ApiResponse<SearXNGConfig>>("/admin/searxng-config/", data).then((r) => r.data.data),
+  test: (data?: Partial<SearXNGConfig>) =>
+    api.post<ApiResponse<SearXNGTestResult>>("/admin/searxng-config/test/", data).then((r) => r.data.data),
+};
+
 export const healthApi = {
   list: (params?: { record_type?: string }) =>
     api.get<ApiResponse<HealthRecord[]>>("/health/records/", { params }).then((r) => r.data.data),
@@ -50,6 +58,10 @@ export const healthApi = {
     api.patch<ApiResponse<HealthRecord>>(`/health/records/${id}/`, data).then((r) => r.data.data),
 
   remove: (id: number) => api.delete<ApiResponse<null>>(`/health/records/${id}/`).then((r) => r.data.data),
+
+  // 获取用户全时序测量打卡历史（用于趋势/增量图表看板与历史数据表）
+  getBmiTimeseries: () =>
+    api.get<ApiResponse<{ timeseries: BmiTimeSeriesRecord[] }>>("/health/bmi-analysis/").then((r) => r.data.data),
   analyzeBmi: (data: BmiAnalysisInput) =>
     api.post<ApiResponse<BmiAnalysisResult>>("/health/bmi-analysis/", data).then((r) => r.data.data),
 };

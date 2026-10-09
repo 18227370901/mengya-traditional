@@ -56,13 +56,23 @@ class BmiAnalysisInputSerializer(serializers.Serializer):
     is_twins = serializers.BooleanField(
         default=False,
     )
+    record_date = serializers.DateField(
+        required=False,
+        allow_null=True,
+    )
+    waist_circumference_cm = serializers.FloatField(
+        min_value=30.0,
+        max_value=200.0,
+        required=False,
+        allow_null=True,
+    )
     medical_history = serializers.ListField(
         child=serializers.CharField(max_length=50),
         default=list,
         required=False,
     )
     save_record = serializers.BooleanField(
-        default=False,
+        default=True,
         required=False,
     )
 

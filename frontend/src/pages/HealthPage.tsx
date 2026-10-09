@@ -1,18 +1,20 @@
 import { useAuthStore } from "@/store/authStore";
-import { useEffect, useState, useCallback } from "react";
-import { Baby, Calendar, CalendarCheck, LineChart, Plus, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Baby, Calendar, CalendarCheck, LineChart, Plus, Trash2, Scale } from "lucide-react";
 import CopyButton from "@/components/CopyButton";
 import { healthApi } from "@/api/services";
 import type { HealthRecord } from "@/types";
 import GrowthChart from "@/components/GrowthChart";
 import VaccineCalendar from "@/components/VaccineCalendar";
 import HealthCalendar from "@/components/HealthCalendar";
+import BmiAnalysisView from "@/components/health/BmiAnalysisView";
 
-type TabKey = "checkup" | "growth" | "vaccine" | "calendar";
+type TabKey = "checkup" | "growth" | "bmi" | "vaccine" | "calendar";
 
 const TABS: Array<{ key: TabKey; label: string; icon: typeof CalendarCheck }> = [
   { key: "checkup", label: "产检记录", icon: CalendarCheck },
   { key: "growth", label: "生长曲线", icon: LineChart },
+  { key: "bmi", label: "体重/BMI分析", icon: Scale },
   { key: "vaccine", label: "疫苗日历", icon: Baby },
   { key: "calendar", label: "日历总览", icon: Calendar },
 ];
@@ -26,7 +28,10 @@ export default function HealthPage() {
   const [toast, setToast] = useState("");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
 
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(""), 2500); };
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(""), 2500);
+  };
 
   const [form, setForm] = useState({
     record_type: "prenatal_exam",
@@ -47,7 +52,11 @@ export default function HealthPage() {
   };
 
   useEffect(() => {
-    load();
+    if (tab !== "bmi") {
+      load();
+    } else {
+      setLoading(false);
+    }
   }, [tab]);
 
   const submit = async () => {
@@ -68,7 +77,6 @@ export default function HealthPage() {
       showToast("保存成功");
       setShowForm(false);
       setForm({ ...form, note: "", gestational_week: "", height: "", weight: "" });
-      // 提交后自动切换到对应类型 tab，确保用户看到刚保存的记录
       if (form.record_type === "growth_measurement") {
         setTab("growth");
       } else {
@@ -94,7 +102,7 @@ export default function HealthPage() {
   const checkupRecords = records.filter((r) => r.record_type === "prenatal_exam");
   const growthRecords = records.filter((r) => r.record_type === "growth_measurement");
 
-  // 生长曲线数据源：生长测量记录 + 产检记录中的身高体重数据（若有）
+  // 生长曲线数据源
   const growthChartPoints = [
     ...growthRecords.map((r) => ({
       date: r.record_date,
@@ -116,14 +124,13 @@ export default function HealthPage() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">健康中心</h1>
-          <p className="mt-1 text-sm text-gray-400">产检 · 生长曲线 · 疫苗日历</p>
+          <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-100">健康中心</h1>
+          <p className="mt-1 text-sm text-gray-400">产检 · 生长曲线 · 体重/BMI · 疫苗日历</p>
         </div>
-        {tab !== "vaccine" && tab !== "calendar" && (
+        {tab !== "vaccine" && tab !== "calendar" && tab !== "bmi" && (
           <button
             className="btn-primary"
             onClick={() => {
-              // 在生长曲线 tab 下新增，自动选择生长记录类型
               setForm((f) => ({
                 ...f,
                 record_type: tab === "growth" ? "growth_measurement" : "prenatal_exam",
@@ -136,14 +143,16 @@ export default function HealthPage() {
         )}
       </div>
 
-      {/* Tab */}
-      <div className="flex gap-2">
+      {/* Tab 导航 */}
+      <div className="flex flex-wrap gap-2">
         {TABS.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
             className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm transition ${
-              tab === t.key ? "bg-brand-500 text-white" : "bg-white text-gray-500 hover:bg-brand-50"
+              tab === t.key
+                ? "bg-brand-500 text-white shadow-xs"
+                : "border border-gray-100 bg-white text-gray-500 hover:bg-brand-50 dark:border-gray-800 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             }`}
           >
             <t.icon className="h-4 w-4" />
@@ -152,7 +161,7 @@ export default function HealthPage() {
         ))}
       </div>
 
-      {/* 新增表单 */}
+      {/* 新增记录表单 */}
       {showForm && (
         <section className="card space-y-3">
           <div className="flex gap-2">
@@ -233,8 +242,11 @@ export default function HealthPage() {
         </section>
       )}
 
+      {/* Tab 页面主体切换 */}
       {loading ? (
         <p className="py-10 text-center text-gray-400">加载中…</p>
+      ) : tab === "bmi" ? (
+        <BmiAnalysisView />
       ) : tab === "checkup" ? (
         <div className="space-y-3">
           {checkupRecords.length === 0 && <p className="py-10 text-center text-gray-400">暂无产检记录</p>}
@@ -243,12 +255,12 @@ export default function HealthPage() {
               <div>
                 <div className="flex items-center gap-2">
                   <CalendarCheck className="h-4 w-4 text-brand-500" />
-                  <span className="font-medium text-gray-700">{r.record_date}</span>
+                  <span className="font-medium text-gray-700 dark:text-gray-200">{r.record_date}</span>
                   {r.gestational_week && <span className="tag">孕{r.gestational_week}周</span>}
                 </div>
                 {r.note && (
                   <>
-                    <p className="mt-1 text-sm text-gray-500">{r.note}</p>
+                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{r.note}</p>
                     <div className="mt-1 flex justify-end">
                       <CopyButton text={r.note} label="复制" />
                     </div>
@@ -256,7 +268,9 @@ export default function HealthPage() {
                 )}
                 {r.ai_analysis && (
                   <>
-                    <p className="mt-2 rounded-lg bg-cream p-2 text-xs text-gray-500">AI 解读：{r.ai_analysis}</p>
+                    <p className="mt-2 rounded-lg bg-cream p-2 text-xs text-gray-500 dark:bg-gray-800/80 dark:text-gray-300">
+                      AI 解读：{r.ai_analysis}
+                    </p>
                     <div className="mt-1 flex justify-end">
                       <CopyButton text={r.ai_analysis} label="复制" />
                     </div>
@@ -273,7 +287,7 @@ export default function HealthPage() {
         </div>
       ) : tab === "growth" ? (
         <section className="card">
-          <h2 className="mb-3 font-semibold text-gray-800">生长曲线</h2>
+          <h2 className="mb-3 font-semibold text-gray-800 dark:text-gray-100">生长曲线</h2>
           <GrowthChart points={growthChartPoints} />
           {growthRecords.length === 0 && (
             <p className="py-6 text-center text-sm text-gray-400">暂无生长数据，点击右上角新增</p>

@@ -181,3 +181,13 @@ OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
 # ===== 限流 =====
 RATE_LIMIT_LOGIN_PER_MINUTE = int(os.getenv("RATE_LIMIT_LOGIN_PER_MINUTE", "5"))
 RATE_LIMIT_GENERAL_PER_MINUTE = int(os.getenv("RATE_LIMIT_GENERAL_PER_MINUTE", "30"))
+
+# ===== SearXNG 私有化元搜索引擎配置 =====
+SEARXNG_BASE_URL = os.getenv("SEARXNG_BASE_URL", "http://127.0.0.1:8888")
+SEARXNG_TIMEOUT = float(os.getenv("SEARXNG_TIMEOUT", "4.0"))
+SEARXNG_FORMAT = os.getenv("SEARXNG_FORMAT", "json")
+SEARXNG_ENGINES = os.getenv("SEARXNG_ENGINES", "")
+SEARXNG_HEALTH_DOMAINS = os.getenv(
+    "SEARXNG_HEALTH_DOMAINS",
+    "nhc.gov.cn,cndiet.cn,chinanutri.cn,dxy.com,haodf.com,familydoctor.com.cn,cdc.gov.cn",
+)

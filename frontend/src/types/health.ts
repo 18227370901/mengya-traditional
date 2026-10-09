@@ -3,9 +3,11 @@
 export type PregnancyStage = "pregnancy" | "postpartum";
 
 export interface BmiAnalysisInput {
+  record_date?: string;
   height_cm: number;
   pre_pregnancy_weight_kg: number;
   current_weight_kg: number;
+  waist_circumference_cm?: number;
   stage_type: PregnancyStage;
   gestational_week?: number;
   postpartum_months?: number;
@@ -19,6 +21,23 @@ export interface CurvePoint {
   target_min: number;
   target_max: number;
   target_median: number;
+}
+
+export interface BmiTimeSeriesRecord {
+  id: number;
+  record_date: string;
+  record_type: string;
+  gestational_week?: number | null;
+  height?: number | null;
+  weight: number;
+  waist_circumference?: number | null;
+  bmi?: number | null;
+  delta_kg: number;
+  pre_weight?: number | null;
+  cumulative_gain?: number | null;
+  gain_status?: "below" | "normal" | "above" | null;
+  is_twins?: boolean;
+  note?: string;
 }
 
 export interface BmiCategoryInfo {
@@ -59,6 +78,7 @@ export interface RecipeRecommendationItem {
   source_id?: number;
   source_badge: string;
   source_url?: string;
+  nutrient_tag?: string;
   ingredients: string;
   benefits: string;
   safety_passed: boolean;
@@ -77,4 +97,25 @@ export interface BmiAnalysisResult {
   lifestyle_advice: LifestyleAdvice;
   disclaimer: string;
   created_record_id?: number | null;
+  timeseries?: BmiTimeSeriesRecord[];
+}
+
+export interface SearXNGConfig {
+  base_url: string;
+  timeout: number;
+  format: string;
+  engines: string;
+  health_domains: string;
+  health_domain_list?: string[];
+  is_available: boolean;
+  can_manage?: boolean;
+}
+
+export interface SearXNGTestResult {
+  status: "success" | "failed";
+  latency_ms?: number;
+  status_code?: number;
+  sample_count?: number;
+  sample_titles?: string[];
+  message: string;
 }
