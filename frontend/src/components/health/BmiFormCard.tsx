@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from "react";
-import { Activity, Sparkles, AlertCircle, Calendar } from "lucide-react";
+import React, { useState, useMemo, useEffect } from "react";
+import { Activity, Sparkles, AlertCircle, Calendar, CheckCircle2 } from "lucide-react";
+import { useAuthStore } from "@/store/authStore";
 import type { BmiAnalysisInput, PregnancyStage } from "@/types/health";
 
 interface BmiFormCardProps {
@@ -15,18 +16,60 @@ const MEDICAL_HISTORY_OPTIONS = [
   { key: "thyroid", label: "甲状腺功能异常" },
 ];
 
+/** 基于预产期的 280 天医学模型自动推算孕周（与后端 gestation_engine 一致） */
+function autoWeekFromDueDate(dueDate: string, recordDate: string): number | null {
+  const due = new Date(dueDate);
+  const rec = new Date(recordDate);
+  if (Number.isNaN(due.getTime()) || Number.isNaN(rec.getTime())) return null;
+  const lmp = due.getTime() - 280 * 86400000;
+  const days = Math.floor((rec.getTime() - lmp) / 86400000);
+  if (days < 0) return 0;
+  return Math.min(40, Math.floor(days / 7));
+}
+
+/** 基于宝宝生日自动推算产后月龄 */
+function autoPostpartumMonths(babyBirthday: string, recordDate: string): number | null {
+  const birth = new Date(babyBirthday);
+  const rec = new Date(recordDate);
+  if (Number.isNaN(birth.getTime()) || Number.isNaN(rec.getTime())) return null;
+  return Math.max(0, Math.floor((rec.getTime() - birth.getTime()) / (30.44 * 86400000)));
+}
+
 export default function BmiFormCard({ onSubmit, loading }: BmiFormCardProps) {
+  const { user } = useAuthStore();
+  const hasDueDate = !!user?.due_date;
+  const hasBabyBirthday = !!user?.baby_birthday;
+
   const [recordDate, setRecordDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
-  const [height, setHeight] = useState<string>("163");
-  const [preWeight, setPreWeight] = useState<string>("52");
-  const [curWeight, setCurWeight] = useState<string>("57");
+  const [height, setHeight] = useState<string>("");
+  const [preWeight, setPreWeight] = useState<string>("");
+  const [curWeight, setCurWeight] = useState<string>("");
   const [waistCircumference, setWaistCircumference] = useState<string>("");
-  const [stageType, setStageType] = useState<PregnancyStage>("pregnancy");
-  const [gestationalWeek, setGestationalWeek] = useState<string>("24");
-  const [postpartumMonths, setPostpartumMonths] = useState<string>("2");
+  // v1.55 档案联动：孕期用户默认孕期阶段；已出生宝宝档案默认产后恢复
+  const [stageType, setStageType] = useState<PregnancyStage>(() =>
+    user && !user.is_pregnant && user.baby_birthday ? "postpartum" : "pregnancy"
+  );
+  const [gestationalWeek, setGestationalWeek] = useState<string>("");
+  const [postpartumMonths, setPostpartumMonths] = useState<string>("");
   const [isTwins, setIsTwins] = useState<boolean>(false);
   const [medicalHistory, setMedicalHistory] = useState<string[]>([]);
   const [errorMsg, setErrorMsg] = useState<string>("");
+
+  // 孕周自动推算：已设预产期时随打卡日期联动填充（允许 ±1 周内微调，超出由后端拦截）
+  useEffect(() => {
+    if (stageType === "pregnancy" && hasDueDate && user?.due_date) {
+      const wk = autoWeekFromDueDate(user.due_date, recordDate);
+      if (wk != null) setGestationalWeek(String(wk));
+    }
+  }, [stageType, hasDueDate, user?.due_date, recordDate]);
+
+  // 产后月龄自动推算：已设宝宝生日时随打卡日期联动填充
+  useEffect(() => {
+    if (stageType === "postpartum" && hasBabyBirthday && user?.baby_birthday) {
+      const months = autoPostpartumMonths(user.baby_birthday, recordDate);
+      if (months != null) setPostpartumMonths(String(months));
+    }
+  }, [stageType, hasBabyBirthday, user?.baby_birthday, recordDate]);
 
   const instantBmi = useMemo(() => {
     const h = parseFloat(height);
@@ -56,15 +99,16 @@ export default function BmiFormCard({ onSubmit, loading }: BmiFormCardProps) {
     e.preventDefault();
     setErrorMsg("");
 
-    const hNum = parseFloat(height);
-    const pwNum = parseFloat(preWeight);
+    // v1.55：身高与孕前体重支持留空自动继承上次打卡基线（首次打卡后端自动初始化）
+    const hNum = height ? parseFloat(height) : NaN;
+    const pwNum = preWeight ? parseFloat(preWeight) : NaN;
     const cwNum = parseFloat(curWeight);
 
-    if (isNaN(hNum) || hNum < 100 || hNum > 230) {
+    if (!isNaN(hNum) && (hNum < 100 || hNum > 230)) {
       setErrorMsg("请输入合理的身高 (100 ~ 230 cm)");
       return;
     }
-    if (isNaN(pwNum) || pwNum < 30 || pwNum > 200) {
+    if (!isNaN(pwNum) && (pwNum < 30 || pwNum > 200)) {
       setErrorMsg("请输入合理的孕前体重 (30 ~ 200 kg)");
       return;
     }
@@ -75,14 +119,14 @@ export default function BmiFormCard({ onSubmit, loading }: BmiFormCardProps) {
 
     const payload: BmiAnalysisInput = {
       record_date: recordDate || undefined,
-      height_cm: hNum,
-      pre_pregnancy_weight_kg: pwNum,
       current_weight_kg: cwNum,
       stage_type: stageType,
       is_twins: isTwins,
       medical_history: medicalHistory,
       save_record: true,
     };
+    if (!isNaN(hNum)) payload.height_cm = hNum;
+    if (!isNaN(pwNum)) payload.pre_pregnancy_weight_kg = pwNum;
 
     if (waistCircumference) {
       const wcNum = parseFloat(waistCircumference);
@@ -94,7 +138,11 @@ export default function BmiFormCard({ onSubmit, loading }: BmiFormCardProps) {
     if (stageType === "pregnancy") {
       const gwNum = parseInt(gestationalWeek, 10);
       if (isNaN(gwNum) || gwNum < 1 || gwNum > 42) {
-        setErrorMsg("请输入有效的孕周 (1 ~ 42周)");
+        setErrorMsg(
+          hasDueDate
+            ? "孕周自动推算失败，请核对档案预产期"
+            : "您还未设置预产期，请手动填写当前孕周 (1 ~ 42周)"
+        );
         return;
       }
       payload.gestational_week = gwNum;
@@ -115,10 +163,10 @@ export default function BmiFormCard({ onSubmit, loading }: BmiFormCardProps) {
           </div>
           <div>
             <h3 className="text-base font-bold text-gray-800 dark:text-gray-100">
-              时序身高体重录入与打卡 (WS/T 801-2022)
+              深度体重/BMI分析与打卡 (WS/T 801-2022)
             </h3>
             <p className="text-xs text-gray-400">
-              支持按天自定义日期补录，测量数据将默认自动持久化归档至健康档案时序库
+              完整医学评估入口 · 快速打卡可使用页头「健康打卡」· 身高/孕前体重留空自动继承基线
             </p>
           </div>
         </div>
@@ -186,31 +234,41 @@ export default function BmiFormCard({ onSubmit, loading }: BmiFormCardProps) {
           <div>
             {stageType === "pregnancy" ? (
               <>
-                <label className="label">当前孕周 (1 ~ 42 周) *</label>
+                <label className="label">
+                  当前孕周 (1 ~ 42 周) {hasDueDate ? "· 按预产期自动" : "*"}
+                </label>
                 <div className="flex items-center gap-2">
                   <input
                     type="number"
                     min="1"
                     max="42"
                     className="input"
-                    placeholder="例如 24"
+                    placeholder={hasDueDate ? "按预产期自动填充" : "例如 24"}
                     value={gestationalWeek}
                     onChange={(e) => setGestationalWeek(e.target.value)}
                     required
                   />
                   <span className="text-xs text-gray-400">周</span>
                 </div>
+                {hasDueDate && (
+                  <p className="mt-1 flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+                    <CheckCircle2 className="h-3 w-3" />
+                    随打卡日期按预产期自动推算，允许 ±1 周内微调
+                  </p>
+                )}
               </>
             ) : (
               <>
-                <label className="label">产后月龄 (0 ~ 36 个月) *</label>
+                <label className="label">
+                  产后月龄 (0 ~ 36 个月) {hasBabyBirthday ? "· 按宝宝生日自动" : "*"}
+                </label>
                 <div className="flex items-center gap-2">
                   <input
                     type="number"
                     min="0"
                     max="36"
                     className="input"
-                    placeholder="例如 2"
+                    placeholder={hasBabyBirthday ? "按宝宝生日自动填充" : "例如 2"}
                     value={postpartumMonths}
                     onChange={(e) => setPostpartumMonths(e.target.value)}
                     required
@@ -224,27 +282,25 @@ export default function BmiFormCard({ onSubmit, loading }: BmiFormCardProps) {
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
           <div>
-            <label className="label">身高 (cm) *</label>
+            <label className="label">身高 (cm, 首次必填)</label>
             <input
               type="number"
               className="input"
-              placeholder="例如 163"
+              placeholder="留空自动继承"
               value={height}
               onChange={(e) => setHeight(e.target.value)}
-              required
             />
           </div>
 
           <div>
-            <label className="label">孕前体重 (kg) *</label>
+            <label className="label">孕前体重 (kg, 选填)</label>
             <input
               type="number"
               step="0.1"
               className="input"
-              placeholder="例如 52.0"
+              placeholder="留空自动继承基线"
               value={preWeight}
               onChange={(e) => setPreWeight(e.target.value)}
-              required
             />
           </div>
 
@@ -283,7 +339,7 @@ export default function BmiFormCard({ onSubmit, loading }: BmiFormCardProps) {
                 onChange={(e) => setIsTwins(e.target.checked)}
                 className="peer sr-only"
               />
-              <div className="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all after:content-['] peer-checked:bg-brand-500 peer-checked:after:translate-x-full dark:bg-gray-700" />
+              <div className="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all after:content-[''] peer-checked:bg-brand-500 peer-checked:after:translate-x-full dark:bg-gray-700" />
               <span className="ml-2 text-xs font-semibold text-gray-700 dark:text-gray-300">
                 双胎妊娠 (WS/T 801-2022 双胎标准，总推荐增重 16.8~24.5 kg)
               </span>
@@ -316,7 +372,7 @@ export default function BmiFormCard({ onSubmit, loading }: BmiFormCardProps) {
 
         <div className="flex items-center justify-between border-t border-orange-100/60 pt-3 dark:border-gray-800">
           <p className="text-xs text-gray-400">
-            ✓ 测量数据默认自动持久化保存至健康中心时序库，可随时在图表看板回溯
+            ✓ 测量数据默认自动持久化保存至孕产记录时序库，孕周按预产期自动校准
           </p>
 
           <button

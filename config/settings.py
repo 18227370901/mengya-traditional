@@ -191,3 +191,5 @@ SEARXNG_HEALTH_DOMAINS = os.getenv(
     "SEARXNG_HEALTH_DOMAINS",
     "nhc.gov.cn,cndiet.cn,chinanutri.cn,dxy.com,haodf.com,familydoctor.com.cn,cdc.gov.cn",
 )
+# AI 助手公网引擎兜底开关（管理员可控，默认关闭：SearXNG 不通时直接调用 AI）
+AI_SEARCH_FALLBACK_ENABLED = os.getenv("AI_SEARCH_FALLBACK_ENABLED", "False").strip().lower() in ("1", "true", "yes")

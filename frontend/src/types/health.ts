@@ -4,8 +4,9 @@ export type PregnancyStage = "pregnancy" | "postpartum";
 
 export interface BmiAnalysisInput {
   record_date?: string;
-  height_cm: number;
-  pre_pregnancy_weight_kg: number;
+  /** 留空自动继承上次打卡基线（首次打卡时后端初始化） */
+  height_cm?: number;
+  pre_pregnancy_weight_kg?: number;
   current_weight_kg: number;
   waist_circumference_cm?: number;
   stage_type: PregnancyStage;
@@ -27,6 +28,8 @@ export interface BmiTimeSeriesRecord {
   id: number;
   record_date: string;
   record_type: string;
+  /** 妈妈记录阶段：pregnancy 孕期 / postpartum 产后（v1.55 语义统一） */
+  stage?: "pregnancy" | "postpartum";
   gestational_week?: number | null;
   height?: number | null;
   weight: number;
@@ -37,6 +40,7 @@ export interface BmiTimeSeriesRecord {
   cumulative_gain?: number | null;
   gain_status?: "below" | "normal" | "above" | null;
   is_twins?: boolean;
+  postpartum_months?: number | null;
   note?: string;
 }
 
@@ -98,6 +102,15 @@ export interface BmiAnalysisResult {
   disclaimer: string;
   created_record_id?: number | null;
   timeseries?: BmiTimeSeriesRecord[];
+  /** 孕周引擎校验结果（自动填充基准/提示语） */
+  gestation_check?: {
+    week: number | null;
+    basis: string;
+    auto_filled: boolean;
+    hint: string;
+  };
+  /** 首次打卡时自动以当前体重初始化孕前基线 */
+  baseline_initialized?: boolean;
 }
 
 export interface SearXNGConfig {
@@ -109,6 +122,8 @@ export interface SearXNGConfig {
   health_domain_list?: string[];
   is_available: boolean;
   can_manage?: boolean;
+  /** AI 助手公网引擎兑底开关（管理员可控，默认关闭） */
+  ai_fallback_enabled?: boolean;
 }
 
 export interface SearXNGTestResult {

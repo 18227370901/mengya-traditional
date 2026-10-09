@@ -741,3 +741,33 @@ mengya-local/
   | `SEARXNG_HEALTH_DOMAINS` | 卫健委/营养学会等 7 个权威域名 | 权威健康白名单过滤 |
 - **`apps/core/services/searxng_client.py`**：0.5s 快速探测 + 毫秒级熔断安全降级（离线绝不阻塞用户请求）、HTML 实体/垃圾词清洗、权威域名 site: 过滤、连通性测试与 `.env` 同步持久化；
 - **前端管理员入口**：健康中心 BMI 分析页头部「SearXNG 引擎配置」弹窗（`SearXNGConfigModal`），支持在线查看/修改/测试连通性/同步写回 `.env`（仅 `is_staff` 管理员可见）。
+
+### 14. 统一健康打卡 · 孕周引擎 · AI 助手实时检索 (v1.55)
+
+#### 14.1 统一「健康打卡」弹窗（录入入口合一）
+- **健康中心页头新增「健康打卡」按钮**（`UnifiedHealthCheckIn`），一次录入自动同步孕产记录 / BMI 时序 / 生长曲线 / 日历总览，替代原先产检与生长两套互不相通的表单；
+- **三选一记录对象**：`我 · 孕期产检` / `我 · 产后恢复` / `宝宝 · 生长测量`，按用户档案智能默认选中（`is_pregnant` 优先孕期、`baby_birthday` 存在默认宝宝测量、其余默认孕期）；
+- **日期与阶段自动推算**：补录历史日期时，宝宝模式自动推算月龄（按 `baby_birthday`）、孕期模式提示手填孕周或先设置预产期、产后模式自动推算产后天数；
+- **归档语义**：孕期/产后打卡写入 `prenatal_exam`（产后通过 `exam_items.stage="postpartum"` 标记），宝宝测量写入 `growth_measurement`；三种模式归档 toast 明确提示各自同步范围（产后打卡不再误写宝宝生长数据）。
+
+#### 14.2 孕周一致性引擎（`apps/core/services/gestation_engine.py`）
+- **双基准推算**：优先用户档案 `due_date` 预产期（280 天医学模型），无预产期时以最早一条 prenatal_exam 的（日期, 孕周）为锚点线性推算；
+- **±1 周矛盾拦截**：`HealthRecordSerializer` 与 BMI 打卡接口双重校验，手填孕周与推算孕周偏差超过 `MAX_WEEK_DEVIATION=1` 周时返回 400，并给出"该日期应为孕 X 周（基于首次打卡推算）"的精确提示；
+- **基线自动继承**：身高 / 孕前体重留空时自动继承最近一次打卡基线；首次打卡以本次实测初始化基线（响应 `baseline_initialized=true`），后续打卡无需重复填写；
+- **BMI 分析响应增强**：新增 `gestation_check`（孕周校验详情）与 `baseline_initialized` 字段，前端据此展示"基线已继承 / 孕周已自动校准"提示。
+
+#### 14.3 三页面数据口径统一
+- **孕产记录 Tab**（原"产检记录"更名）：仅展示妈妈记录（`prenatal_exam` 全部，含产后），阶段徽章区分 `孕 X 周` / `产后恢复`；
+- **生长曲线 Tab**：仅展示宝宝测量（`growth_measurement`），妈妈数据不再混入；
+- **体重/BMI 分析 Tab**：时序数据源统一为 `prenatal_exam`，历史表阶段列按 `stage` 字段显示 `孕 X 周` / `产后 X 个月`，看板趋势/增量双视图按阶段通道渲染；
+- **`BmiFormCard` 档案联动**：阶段类型初始跟随用户档案（非孕期且宝宝已出生默认"产后母乳/恢复期"），产后月龄按宝宝生日自动填充，身高/孕前体重改为选填（留空继承基线）。
+
+#### 14.4 AI 助手接入 SearXNG 实时检索
+- **`apps/core/services/web_search.py` 新增 `search_for_ai()`**：SearXNG 优先实时检索（毫秒级熔断）→ 不可用时按管理员开关决策：`AI_SEARCH_FALLBACK_ENABLED=False`（默认）直接由 AI 知识库回答（`status=unavailable`），开启则回退多公网引擎检索（`status=fallback:引擎名`）；`_SEARCH_PATTERNS` 扩展母婴健康类关键词命中（黄疸/辅食/疫苗/待产包/增重等），寒暄与创作类问题不联网；
+- **`apps/core/services/ai_service.py`**：`ai_chat` 改用 `search_for_ai` 检索管线，响应新增 `search_status` / `sources`（来源域名列表），`latency_ms` 修复为真实耗时（原为假随机数）；
+- **前端 `AIAssistantPage`**：消息级检索状态徽章（`SearXNG实时检索` 绿色 / `未接入实时检索，回答基于 AI 知识库（可配置 SearXNG）` 灰色 / `公网引擎检索` 蓝色）、来源列表可展开折叠、管理员头部「SearXNG 引擎配置」入口（复用 `SearXNGConfigModal`）；
+- **公网兜底开关**（管理员可控）：`SearXNGConfigModal` 新增 `AI 助手公网引擎兜底 (AI_SEARCH_FALLBACK_ENABLED)` 开关，随配置接口一键同步写回 `.env`；`.env` / `.env.example` / `config/settings.py` 三方固化，默认关闭。
+
+#### 14.5 涉及文件清单
+- 后端：`apps/core/services/gestation_engine.py`（新增）、`apps/core/services/web_search.py`、`apps/core/services/ai_service.py`、`apps/core/services/searxng_client.py`、`apps/core/views.py`、`apps/core/views_searxng.py`、`apps/core/serializers/__init__.py`、`apps/core/serializers/health.py`、`config/settings.py`、`.env` / `.env.example`；
+- 前端：`frontend/src/components/health/UnifiedHealthCheckIn.tsx`（新增）、`SearXNGConfigModal.tsx`、`BmiFormCard.tsx`、`BmiHistoryTable.tsx`、`BmiTimeSeriesBoard.tsx`、`BmiAnalysisView.tsx`、`frontend/src/pages/HealthPage.tsx`、`frontend/src/pages/AIAssistantPage.tsx`、`frontend/src/store/chatStore.ts`、`frontend/src/types/health.ts`。

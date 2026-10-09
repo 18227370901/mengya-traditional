@@ -434,6 +434,32 @@ class HealthRecordSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
+    def validate(self, attrs):
+        """
+        孕周一致性校验引擎（妈妈记录 prenatal_exam 专属）：
+        1. 已有推算基准（档案预产期或首次打卡锚点）时，手填孕周偏差 > 1 周直接拦截并提示正确值；
+        2. 未手填孕周时自动按基准填充，杜绝"日期与孕周矛盾"的脏数据。
+        """
+        record_type = attrs.get("record_type")
+        if record_type == "prenatal_exam":
+            request = self.context.get("request")
+            user = getattr(request, "user", None)
+            if user and user.is_authenticated:
+                from apps.core.services.gestation_engine import validate_gestational_week
+
+                check = validate_gestational_week(
+                    user,
+                    attrs.get("record_date"),
+                    attrs.get("gestational_week"),
+                )
+                if not check["ok"]:
+                    raise serializers.ValidationError(
+                        {"gestational_week": check["hint"]}
+                    )
+                if check["week"] is not None:
+                    attrs["gestational_week"] = check["week"]
+        return attrs
+
     def create(self, validated_data):
         request = self.context.get("request")
         if request and request.user.is_authenticated:

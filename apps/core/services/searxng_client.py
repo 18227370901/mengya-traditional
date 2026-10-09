@@ -222,6 +222,8 @@ class SearXNGClient:
             "health_domains": ",".join(cls.get_health_domains()),
             "health_domain_list": cls.get_health_domains(),
             "is_available": cls.is_available(),
+            # AI 助手公网引擎兜底开关（管理员可控，默认关闭）；兼容 settings 布尔与 env 字符串两种来源
+            "ai_fallback_enabled": _get_setting("AI_SEARCH_FALLBACK_ENABLED", False) in (True, "True", "true", "1", 1),
         }
 
     @classmethod
@@ -297,6 +299,7 @@ class SearXNGClient:
         engines: str = "",
         health_domains: str = "",
         env_file_path: str = None,
+        ai_fallback_enabled: bool = None,
     ) -> bool:
         from pathlib import Path
         target_file = Path(env_file_path) if env_file_path else Path(".env")
@@ -311,6 +314,8 @@ class SearXNGClient:
             "SEARXNG_ENGINES": clean_engines,
             "SEARXNG_HEALTH_DOMAINS": clean_domains,
         }
+        if ai_fallback_enabled is not None:
+            updates["AI_SEARCH_FALLBACK_ENABLED"] = "True" if ai_fallback_enabled else "False"
         try:
             lines = []
             if target_file.exists():
@@ -351,6 +356,8 @@ class SearXNGClient:
             setattr(settings, "SEARXNG_FORMAT", "json")
             setattr(settings, "SEARXNG_ENGINES", clean_engines)
             setattr(settings, "SEARXNG_HEALTH_DOMAINS", clean_domains)
+            if ai_fallback_enabled is not None:
+                setattr(settings, "AI_SEARCH_FALLBACK_ENABLED", bool(ai_fallback_enabled))
         except Exception:
             pass
         cls._last_probe_status = None

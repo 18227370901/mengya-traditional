@@ -10,21 +10,21 @@ class BmiAnalysisInputSerializer(serializers.Serializer):
     height_cm = serializers.FloatField(
         min_value=100.0,
         max_value=230.0,
-        required=True,
+        required=False,
+        allow_null=True,
         error_messages={
             "min_value": "身高不能低于 100 cm",
             "max_value": "身高不能高于 230 cm",
-            "required": "请输入身高",
         },
     )
     pre_pregnancy_weight_kg = serializers.FloatField(
         min_value=30.0,
         max_value=200.0,
-        required=True,
+        required=False,
+        allow_null=True,
         error_messages={
             "min_value": "孕前体重不能低于 30 kg",
             "max_value": "孕前体重不能高于 200 kg",
-            "required": "请输入孕前体重",
         },
     )
     current_weight_kg = serializers.FloatField(
@@ -78,10 +78,8 @@ class BmiAnalysisInputSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         stage = attrs.get("stage_type", "pregnancy")
-        if stage == "pregnancy":
-            if not attrs.get("gestational_week"):
-                raise serializers.ValidationError({"gestational_week": "孕期阶段必须提供当前孕周(1~42周)"})
-        elif stage == "postpartum":
+        if stage == "postpartum":
             if attrs.get("postpartum_months") is None:
                 attrs["postpartum_months"] = 1
+        # 孕周/身高/孕前体重的补齐与校验由视图层统一执行（孕周引擎 + 基线继承）
         return attrs

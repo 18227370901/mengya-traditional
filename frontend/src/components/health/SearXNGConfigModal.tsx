@@ -39,6 +39,7 @@ export default function SearXNGConfigModal({
     health_domains:
       "nhc.gov.cn,cndiet.cn,chinanutri.cn,dxy.com,haodf.com,familydoctor.com.cn,cdc.gov.cn",
     is_available: false,
+    ai_fallback_enabled: false,
   });
 
   useEffect(() => {
@@ -61,6 +62,7 @@ export default function SearXNGConfigModal({
                 "nhc.gov.cn,cndiet.cn,chinanutri.cn,dxy.com,haodf.com,familydoctor.com.cn,cdc.gov.cn",
               is_available: !!res.is_available,
               can_manage: res.can_manage,
+              ai_fallback_enabled: !!res.ai_fallback_enabled,
             });
           }
         })
@@ -106,6 +108,7 @@ export default function SearXNGConfigModal({
         timeout: Number(form.timeout),
         engines: form.engines,
         health_domains: form.health_domains,
+        ai_fallback_enabled: !!form.ai_fallback_enabled,
       });
       setSavedSuccess(true);
       if (onSaved) onSaved();
@@ -233,7 +236,7 @@ export default function SearXNGConfigModal({
             <div>
               <label className="label flex items-center justify-between">
                 <span>权威健康机构白名单 (SEARXNG_HEALTH_DOMAINS) *</span>
-                <span className="text-[11px] text-gray-400">仅从权威来源抓取食谱</span>
+                <span className="text-[11px] text-gray-400">仅从权威来源抓取食谱与实时答案</span>
               </label>
               <textarea
                 rows={3}
@@ -243,6 +246,27 @@ export default function SearXNGConfigModal({
                 onChange={(e) => setForm({ ...form, health_domains: e.target.value })}
                 required
               />
+            </div>
+
+            {/* AI 助手公网引擎兜底开关（v1.55 管理员可控，默认关闭） */}
+            <div className="flex items-center justify-between rounded-xl border border-gray-100 bg-gray-50/60 p-3 dark:border-gray-700 dark:bg-gray-900/40">
+              <div className="pr-3">
+                <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">
+                  AI 助手公网引擎兜底 (AI_SEARCH_FALLBACK_ENABLED)
+                </p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-gray-400">
+                  SearXNG 不可用时：关闭（默认）直接由 AI 知识库回答；开启后回退多公网引擎检索（可能受网络环境波动）
+                </p>
+              </div>
+              <label className="relative inline-flex shrink-0 cursor-pointer items-center">
+                <input
+                  type="checkbox"
+                  checked={!!form.ai_fallback_enabled}
+                  onChange={(e) => setForm({ ...form, ai_fallback_enabled: e.target.checked })}
+                  className="peer sr-only"
+                />
+                <div className="peer h-5 w-9 rounded-full bg-gray-300 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all after:content-[''] peer-checked:bg-brand-500 peer-checked:after:translate-x-full dark:bg-gray-600" />
+              </label>
             </div>
 
             {testResult && (

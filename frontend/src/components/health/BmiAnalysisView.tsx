@@ -25,7 +25,7 @@ export default function BmiAnalysisView() {
 
   const showToast = (msg: string) => {
     setToast(msg);
-    setTimeout(() => setToast(""), 2500);
+    setTimeout(() => setToast(""), 4000);
   };
 
   /** 拉取全时序测量打卡历史（看板与历史表共用数据源） */
@@ -56,9 +56,18 @@ export default function BmiAnalysisView() {
       } else {
         loadTimeseries();
       }
-      showToast("分析完成！已为您生成专属医学达标报告与个性化方案");
+      // v1.55：透出孕周引擎自动校准与基线初始化提示
+      const hints: string[] = ["分析完成！已为您生成专属医学达标报告与个性化方案"];
+      if (res?.baseline_initialized) {
+        hints.push("首次打卡已自动以当前体重初始化孕前基线");
+      }
+      if (res?.gestation_check?.hint) {
+        hints.push(res.gestation_check.hint);
+      }
+      showToast(hints.join("；"));
     } catch (err: any) {
-      showToast(err.message || "分析请求失败，请稍后重试");
+      const data = err?.response?.data;
+      showToast(data?.message || err?.message || "分析请求失败，请稍后重试");
     } finally {
       setLoading(false);
     }

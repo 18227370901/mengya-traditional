@@ -1446,5 +1446,20 @@ apps/core/                                    apps/core/
   </ul>
 </div>
 
+<div class="card" style="margin-top:20px;border-left:4px solid #f97316;padding:16px;background:var(--bg-card, #fff);">
+  <h3 style="margin-top:0;color:#f97316;">10.16 统一健康打卡 · 孕周引擎 · AI 实时检索体系 (v1.55)</h3>
+  <h4 style="color:#1e293b;font-size:15px;margin-top:12px;">10.16.1 业务背景与改造目标</h4>
+  <p style="color:#334155;line-height:1.6;">修复 <code>growth_measurement</code> 一词两义（产后妈妈打卡 ↔ 宝宝测量混写）导致的跨页面数据串扰；孕周与日期缺乏一致性校验，矛盾数据可入库；产检与生长两套录入表单互不相通、非孕期用户被迫使用孕期语义；AI 助手无实时检索能力且耗时指标失真。</p>
+  <h4 style="color:#1e293b;font-size:15px;margin-top:12px;">10.16.2 架构设计与实现落地</h4>
+  <ul style="color:#334155;line-height:1.6;">
+    <li><strong>记录语义重构（零迁移）</strong>：产后妈妈打卡复用 <code>prenatal_exam</code> + <code>exam_items.stage="postpartum"</code> 标记（新增 <code>stage / postpartum_months</code> 字段），宝宝测量独占 <code>growth_measurement</code>，三页面口径彻底分离（孕产记录 = prenatal_exam 全量 + 阶段徽章；生长曲线 = growth_measurement 专属；BMI 时序 = prenatal_exam 专属）；</li>
+    <li><strong>孕周一致性引擎</strong>：<code>gestation_engine.py</code> 双基准推算（预产期 280 天医学模型优先 ↔ 最早打卡锚点线性外推），<code>MAX_WEEK_DEVIATION=1</code> 周矛盾拦截（<code>HealthRecordSerializer</code> 与 BMI 接口双重校验，超偏差 400 + "该日期应为孕 X 周"精确提示）；身高 / 孕前体重基线自动继承，首次打卡实测初始化（<code>baseline_initialized=true</code>）；</li>
+    <li><strong>统一健康打卡弹窗</strong>：<code>UnifiedHealthCheckIn.tsx</code> 三选一记录对象（孕期产检 / 产后恢复 / 宝宝生长测量）按档案智能默认（<code>is_pregnant</code> → 孕期、<code>baby_birthday</code> → 宝宝）；日期补录自动推算孕周 / 产后天数 / 宝宝月龄；妈妈打卡走 <code>bmi-analysis</code> 接口、宝宝测量走 <code>healthApi.create</code>；</li>
+    <li><strong>AI 实时检索管线</strong>：<code>web_search.search_for_ai()</code> SearXNG 优先（毫秒级熔断）→ 不可用时按管理员开关 <code>AI_SEARCH_FALLBACK_ENABLED</code> 决策（默认关闭直接 AI 知识库回答 <code>status=unavailable</code>；开启回退多公网引擎 <code>status=fallback:引擎名</code>）；<code>_SEARCH_PATTERNS</code> 扩展母婴健康关键词，寒暄创作类不联网；<code>ai_chat</code> 响应新增 <code>search_status / sources</code>，<code>latency_ms</code> 修复为真实耗时；</li>
+    <li><strong>AI 前端状态透出</strong>：<code>AIAssistantPage</code> 消息级检索徽章（SearXNG 实时检索绿色 / 未接入实时检索灰色 / 公网引擎蓝色）+ 来源列表展开折叠 + 管理员头部 SearXNG 配置入口；<code>SearXNGConfigModal</code> 新增公网兜底开关并随配置接口同步 <code>.env</code>；</li>
+    <li><strong>验证结论</strong>：v1.55 冒烟测试 29/29 通过；浏览器全链路验证通过（三种打卡模式归档 / 孕周 5 周矛盾被 400 精确拦截 / 基线继承 / 生长曲线与孕产记录互不混数 / AI 灰色徽章降级提示 / 兜底开关默认关闭）。</li>
+  </ul>
+</div>
+
 </body>
 </html>

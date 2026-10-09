@@ -2006,13 +2006,13 @@ class HealthRecordViewSet(viewsets.ModelViewSet):
 
 
 def _build_bmi_timeseries(user):
-    """构建用户时序测量打卡历史（含孕前基线、累计增重与达标状态），供 BMI 图表看板与历史数据表复用"""
+    """构建妈妈时序测量打卡历史（仅 prenatal_exam，含孕期/产后阶段标记与达标状态），供 BMI 图表看板与历史数据表复用"""
     from apps.core.models.health import HealthRecord
     timeseries_history = []
     try:
         user_records = HealthRecord.objects.filter(
             user=user,
-            record_type__in=["prenatal_exam", "growth_measurement"],
+            record_type="prenatal_exam",
         ).exclude(weight__isnull=True).order_by("record_date", "created_at")
         prev_w = None
         for r in user_records:
@@ -2023,10 +2023,13 @@ def _build_bmi_timeseries(user):
             pre_weight = items.get("pre_weight")
             rec_bmi = round(r.weight / ((r.height / 100.0) ** 2), 2) if (r.height and r.height > 0) else None
             cum_gain = round(r.weight - pre_weight, 2) if (pre_weight and pre_weight > 0) else None
+            # 阶段标记：新数据显式存 exam_items.stage；历史数据按孕周有无回推
+            stage = items.get("stage") or ("pregnancy" if r.gestational_week else "pregnancy")
             timeseries_history.append({
                 "id": r.id,
                 "record_date": str(r.record_date),
                 "record_type": r.record_type,
+                "stage": stage,
                 "gestational_week": r.gestational_week,
                 "height": r.height,
                 "weight": r.weight,
@@ -2037,6 +2040,7 @@ def _build_bmi_timeseries(user):
                 "cumulative_gain": cum_gain,
                 "gain_status": items.get("gain_status"),
                 "is_twins": bool(items.get("is_twins", False)),
+                "postpartum_months": items.get("postpartum_months"),
                 "note": r.note,
             })
     except Exception:
@@ -2073,28 +2077,82 @@ class HealthBmiAnalysisView(APIView):
             )
 
         data = serializer.validated_data
+        from apps.core.services.gestation_engine import validate_gestational_week
+        from apps.core.models.health import HealthRecord
+
+        # ===== 基线自动补齐：身高与孕前体重可从最近一条妈妈记录继承（支持统一健康打卡轻量录入）=====
+        stage_type = data.get("stage_type", "pregnancy")
+        current_weight = data["current_weight_kg"]
+        height_cm = data.get("height_cm")
+        pre_weight = data.get("pre_pregnancy_weight_kg")
+        last_mom_record = (
+            HealthRecord.objects.filter(user=request.user, record_type="prenatal_exam")
+            .order_by("-record_date", "-created_at")
+            .first()
+        )
+        if not height_cm and last_mom_record and last_mom_record.height:
+            height_cm = last_mom_record.height
+        if not pre_weight and last_mom_record and isinstance(last_mom_record.exam_items, dict):
+            pre_weight = last_mom_record.exam_items.get("pre_weight")
+        baseline_initialized = False
+        if not pre_weight:
+            # 首次打卡：以当前实测体重初始化孕前基线，后续打卡自动继承
+            pre_weight = current_weight
+            baseline_initialized = True
+        if not height_cm:
+            return Response(
+                {"code": 4002, "message": "请填写身高（首次打卡需录入一次，之后将自动继承）", "data": None},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ===== 孕周一致性校验引擎（孕期阶段专属；偏差 > 1 周直接拦截）=====
+        target_date = data.get("record_date") or timezone.now().date()
+        gestational_week = data.get("gestational_week")
+        gestation_check = {"week": None, "basis": "", "auto_filled": False, "hint": ""}
+        if stage_type == "pregnancy":
+            wk_check = validate_gestational_week(request.user, target_date, gestational_week)
+            gestation_check = {
+                "week": wk_check.get("week"),
+                "basis": wk_check.get("basis", ""),
+                "auto_filled": wk_check.get("auto_filled", False),
+                "hint": wk_check.get("hint", ""),
+            }
+            if not wk_check["ok"]:
+                return Response(
+                    {"code": 4003, "message": wk_check["hint"], "data": {"expected_week": wk_check.get("expected")}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if wk_check["week"] is None:
+                return Response(
+                    {"code": 4003, "message": "请填写当前孕周，或在「我的」档案中设置预产期以自动推算", "data": None},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            gestational_week = wk_check["week"]
+        else:
+            gestational_week = None
+
         evaluation = MedicalCalculator.evaluate_weight_gain(
-            height_cm=data["height_cm"],
-            pre_pregnancy_weight_kg=data["pre_pregnancy_weight_kg"],
-            current_weight_kg=data["current_weight_kg"],
-            gestational_week=data.get("gestational_week"),
+            height_cm=height_cm,
+            pre_pregnancy_weight_kg=pre_weight,
+            current_weight_kg=current_weight,
+            gestational_week=gestational_week,
             is_twins=data.get("is_twins", False),
-            stage_type=data.get("stage_type", "pregnancy"),
+            stage_type=stage_type,
             postpartum_months=data.get("postpartum_months"),
             medical_history=data.get("medical_history", []),
         )
 
         diet_plan = DietRecommendationService.build_personalized_diet_plan(
-            gestational_week=data.get("gestational_week"),
-            stage_type=data.get("stage_type", "pregnancy"),
+            gestational_week=gestational_week,
+            stage_type=stage_type,
             bmi_category=evaluation.get("category", "normal"),
             medical_history=data.get("medical_history", []),
             actual_gain=evaluation.get("actual_gain", 0.0),
         )
 
         lifestyle_care = DietRecommendationService.get_lifestyle_and_care(
-            gestational_week=data.get("gestational_week"),
-            stage_type=data.get("stage_type", "pregnancy"),
+            gestational_week=gestational_week,
+            stage_type=stage_type,
             medical_history=data.get("medical_history", []),
             bmi_category=evaluation.get("category", "normal"),
         )
@@ -2106,27 +2164,33 @@ class HealthBmiAnalysisView(APIView):
         )
 
         created_record_id = None
-        target_date = data.get("record_date") or timezone.now().date()
-        rec_type = "growth_measurement" if data.get("stage_type") == "postpartum" else "prenatal_exam"
+        # 语义统一：妈妈记录一律 prenatal_exam，产后打卡以 exam_items.stage 标记（不再写入 growth_measurement）
+        rec_type = "prenatal_exam"
+        stage_mark = "postpartum" if stage_type == "postpartum" else "pregnancy"
         exam_items = {
+            "stage": stage_mark,
             "waist_circumference": data.get("waist_circumference_cm"),
-            "pre_weight": data["pre_pregnancy_weight_kg"],
+            "pre_weight": pre_weight,
             "bmi": evaluation["bmi"],
             "actual_gain": evaluation["actual_gain"],
             "gain_status": evaluation.get("gain_status", "normal"),
             "is_twins": bool(data.get("is_twins", False)),
+            "postpartum_months": data.get("postpartum_months"),
         }
         try:
-            from apps.core.models.health import HealthRecord
             new_rec = HealthRecord.objects.create(
                 user=request.user,
                 record_type=rec_type,
                 record_date=target_date,
-                gestational_week=data.get("gestational_week"),
-                height=data["height_cm"],
-                weight=data["current_weight_kg"],
+                gestational_week=gestational_week,
+                height=height_cm,
+                weight=current_weight,
                 exam_items=exam_items,
-                note=f"孕前BMI {evaluation['bmi']} ({evaluation['category_label']}), 累计增重 {evaluation['actual_gain']}kg ({evaluation.get('gain_status_label', '')})",
+                note=(
+                    f"{'产后' if stage_mark == 'postpartum' else f'孕{gestational_week}周'}打卡："
+                    f"孕前BMI {evaluation['bmi']} ({evaluation['category_label']}), "
+                    f"累计增重 {evaluation['actual_gain']}kg ({evaluation.get('gain_status_label', '')})"
+                ),
             )
             created_record_id = new_rec.id
         except Exception:
@@ -2155,6 +2219,8 @@ class HealthBmiAnalysisView(APIView):
                 "disclaimer": disclaimer,
                 "created_record_id": created_record_id,
                 "timeseries": timeseries_history,
+                "gestation_check": gestation_check,
+                "baseline_initialized": baseline_initialized,
             },
         })
 

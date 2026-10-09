@@ -872,3 +872,26 @@ done
    - `GET/PUT /api/admin/searxng-config/` 与 `POST /api/admin/searxng-config/test/`：管理员配置查看/更新与连通性测试（仅 `is_staff`）。
 4. **前端四卡片信息流**：`BmiFormCard`（按天补录 / 腹围 / 单双胎 / 代谢病史 / 移除冗余勾选）→ `BmiTimeSeriesBoard`（趋势通道带+中位线+实测曲线；Δkg 变色柱状 + 视图切换 + 近7天/近1个月/全孕期·全产后筛选）→ `BmiHistoryTable`（历史打卡 + 删除二次确认 + 看板联动刷新）→ 医学预警 Banner + WS/T 801-2022 曲线看板 + 双通道食谱 + 运动心理关怀；
 5. **管理员 SearXNG 配置弹窗**：`SearXNGConfigModal` 挂载于 BMI 分析页头部（仅 `is_staff` 可见），支持在线查看/修改/测试连通性/同步写回 `.env` 并热刷新运行配置。
+
+### 10.16 统一健康打卡 · 孕周引擎 · AI 实时检索体系 (v1.55)
+
+#### 10.16.1 业务背景与改造目标
+1. **页面间数据联动混乱**：`growth_measurement` 被同时用作"产后妈妈打卡"与"宝宝测量"两种语义，导致妈妈身高体重混入宝宝生长曲线、BMI 历史表对非孕期用户错显"产后恢复"，且孕产记录 / 生长曲线 / BMI 分析三页面三种过滤口径互不一致；
+2. **孕周无一致性校验**：同月不同孕周的矛盾数据可同时入库（如 2026-05-01 孕 1 周与 2026-06-01 孕 2 周并存），时序趋势与推荐增重通道失真；
+3. **录入入口分裂**：产检录入与生长录入两套表单互不相通、切换 Tab 状态残留，非孕期用户（备孕 / 已育）被迫在孕期语义下打卡；
+4. **AI 助手无实时检索能力**：已有 SearXNG 客户端仅服务食谱双通道，AI 问答直接走模型知识库，时效性问题（如最新指南 / 政策）无法联网求证，且 `latency_ms` 为假随机数、无检索状态透出。
+
+#### 10.16.2 架构设计与实现落地
+1. **记录语义重构（零迁移）**：产后妈妈打卡复用 `prenatal_exam` + `exam_items.stage="postpartum"` 标记（新增 `stage` / `postpartum_months` 字段），宝宝测量独占 `growth_measurement`，彻底消除一词两义；
+2. **孕周一致性引擎**（`apps/core/services/gestation_engine.py`）：
+   - 双基准推算：优先档案 `due_date` 预产期（280 天医学模型），无预产期以最早 prenatal_exam 的（日期, 孕周）锚点线性外推；
+   - `MAX_WEEK_DEVIATION=1` 周矛盾拦截：`HealthRecordSerializer.validate` 与 BMI 打卡接口双重校验，超偏差返回 400 并附"该日期应为孕 X 周（基于首次打卡推算）"精确提示；
+   - 基线自动继承：身高 / 孕前体重留空自动继承最近打卡基线，首次打卡以实测初始化（响应 `baseline_initialized=true`）。
+3. **统一健康打卡弹窗**（`UnifiedHealthCheckIn.tsx`）：三选一记录对象（孕期产检 / 产后恢复 / 宝宝生长测量）按档案智能默认（`is_pregnant` → 孕期、`baby_birthday` → 宝宝测量）；日期补录时自动推算孕周 / 产后天数 / 宝宝月龄；妈妈打卡走 `bmi-analysis` 接口、宝宝测量走 `healthApi.create`，归档 toast 按模式提示各自同步范围；
+4. **三页面口径统一**：孕产记录 Tab（更名自"产检记录"）仅显示 `prenatal_exam` 全量 + 阶段徽章；生长曲线 Tab 仅 `growth_measurement`；BMI 时序源统一 `prenatal_exam`，历史表阶段列按 `stage` 渲染 `孕 X 周` / `产后 X 个月`；`BmiFormCard` 阶段类型初始跟随档案、产后月龄按宝宝生日自动、身高 / 孕前体重改选填；
+5. **AI 实时检索管线**：
+   - `web_search.search_for_ai()`：SearXNG 优先（毫秒级熔断）→ 不可用时按管理员开关 `AI_SEARCH_FALLBACK_ENABLED` 决策：关闭（默认）直接 AI 知识库回答（`status=unavailable`），开启回退多公网引擎（`status=fallback:引擎名`）；
+   - `_SEARCH_PATTERNS` 扩展母婴健康关键词（黄疸 / 辅食 / 疫苗 / 待产包 / 增重等），寒暄创作类不联网；
+   - `ai_chat` 响应新增 `search_status` / `sources`，`latency_ms` 修复为真实耗时；
+   - 前端 `AIAssistantPage` 消息级徽章（SearXNG 实时检索绿色 / 未接入实时检索灰色 / 公网引擎蓝色）+ 来源列表展开折叠 + 管理员头部 SearXNG 配置入口；`SearXNGConfigModal` 新增公网兜底开关并随配置接口同步 `.env`。
+6. **验证结论**：v1.55 冒烟测试 29/29 通过（孕周引擎锚点推算 / 矛盾拦截 / 序列化器校验 / 语义归档 / 基线继承 / 口径分离 / AI 检索链路 / 兜底开关真实生效），浏览器全链路逐项验证通过（三种打卡模式归档 / 孕周 5 周矛盾被 400 精确拦截 / 累计增重基线继承 / 生长曲线与孕产记录互不混数 / AI 灰色徽章"未接入实时检索" / 兜底开关文案与默认关闭状态）。

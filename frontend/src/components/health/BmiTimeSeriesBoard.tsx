@@ -63,8 +63,12 @@ function getWeekTarget(week: number, category: BmiCategory, isTwins: boolean) {
 
 function recordLabel(r: BmiTimeSeriesRecord): string {
   const datePart = r.record_date.slice(5);
-  if (r.record_type === "prenatal_exam" && r.gestational_week) {
-    return `${datePart} 孕${r.gestational_week}周`;
+  // v1.55 语义统一：按 stage 区分（兼容历史数据 record_type 回推）
+  if (r.stage === "postpartum") {
+    return r.postpartum_months != null ? `${datePart} 产后${r.postpartum_months}月` : `${datePart} 产后`;
+  }
+  if (r.stage === "pregnancy" || r.record_type === "prenatal_exam") {
+    return r.gestational_week ? `${datePart} 孕${r.gestational_week}周` : `${datePart} 孕期`;
   }
   return datePart;
 }
@@ -97,9 +101,10 @@ export default function BmiTimeSeriesBoard({ records, loading }: BmiTimeSeriesBo
         runningDelta = idx === 0 ? 0 : +(runningDelta + r.delta_kg).toFixed(2);
         cumulative = runningDelta;
       }
-      // 当周 WS/T 801-2022 推荐区间（仅孕期打卡且具备孕前基线数据时计算）
+      // 当周 WS/T 801-2022 推荐区间（仅孕期打卡且具备孕前基线数据时计算；产后记录不绘通道带）
       let target: { min: number; max: number; median: number } | null = null;
-      if (r.record_type === "prenatal_exam" && r.gestational_week && r.height && r.pre_weight) {
+      const isPregnancyStage = r.stage === "pregnancy" || (!r.stage && r.record_type === "prenatal_exam");
+      if (isPregnancyStage && r.gestational_week && r.height && r.pre_weight) {
         const preBmi = r.pre_weight / ((r.height / 100) ** 2);
         target = getWeekTarget(r.gestational_week, getBmiCategory(preBmi), !!r.is_twins);
       }
@@ -145,7 +150,7 @@ export default function BmiTimeSeriesBoard({ records, loading }: BmiTimeSeriesBo
           formatter: (params: any) => {
             const rec = filtered[params[0]?.dataIndex];
             if (!rec) return "";
-            let tip = `<b>${rec.record_date}${rec.gestational_week ? ` · 孕${rec.gestational_week}周` : ""}</b><br/>`;
+            let tip = `<b>${rec.record_date}${rec.gestational_week ? ` · 孕${rec.gestational_week}周` : rec.stage === "postpartum" ? " · 产后" : ""}</b><br/>`;
             if (rec.target) {
               tip += `<span style="color:#10b981">●</span> 当周适宜增重：${rec.target.min} ~ ${rec.target.max} kg<br/>`;
               tip += `<span style="color:#34d399">--</span> 适宜中位：${rec.target.median} kg<br/>`;
@@ -253,7 +258,7 @@ export default function BmiTimeSeriesBoard({ records, loading }: BmiTimeSeriesBo
             const val = param.value as number;
             const verdict =
               val > 0.9 ? "⚠ 超出单次安全阈值" : val > 0.6 ? "注意：增重偏快" : val < -0.5 ? "体重明显下降，请关注" : "处于安全范围";
-            return `<b>${rec.record_date}${rec.gestational_week ? ` · 孕${rec.gestational_week}周` : ""}</b><br/>较上次变化：<b>${val > 0 ? "+" : ""}${val} kg</b><br/>${verdict}`;
+            return `<b>${rec.record_date}${rec.gestational_week ? ` · 孕${rec.gestational_week}周` : rec.stage === "postpartum" ? " · 产后" : ""}</b><br/>较上次变化：<b>${val > 0 ? "+" : ""}${val} kg</b><br/>${verdict}`;
           },
         },
         grid: { top: 30, right: 25, bottom: 45, left: 45 },
