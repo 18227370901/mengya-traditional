@@ -136,6 +136,10 @@ class SearXNGClient:
             "categories": categories or "general",
             "safesearch": "1",
         }
+        # v1.55.1 修复：未显式指定引擎时回退管理员配置的 SEARXNG_ENGINES，
+        # 使「指定检索源引擎」配置真正在 AI 助手/健康/食谱检索链路中生效
+        if not engines:
+            engines = cls.get_engines()
         if engines:
             params["engines"] = engines
 
@@ -234,62 +238,111 @@ class SearXNGClient:
         engines: str = None,
         health_domains: str = None,
     ) -> dict:
+        """v1.55.1 增强诊断：两跳测试（通用检索验证引擎可用性 + 权威健康白名单通道），
+        区分「实例不可达」「实例可达但上游引擎被封禁/限流」「检索正常」三类状态，
+        并透出 SearXNG 返回的 unresponsive 引擎清单供管理员排查。"""
         import time
         target_url = (base_url or cls.get_base_url()).rstrip("/")
         req_timeout = float(timeout) if timeout is not None else cls.get_timeout()
         req_engines = engines if engines is not None else cls.get_engines()
-        start_time = time.time()
-        endpoint = f"{target_url}/search"
-        params = {
-            "q": "孕期营养食谱 (site:cndiet.cn OR site:nhc.gov.cn)",
-            "format": "json",
-            "language": "zh-CN",
-            "categories": "general",
-            "safesearch": "1",
-        }
-        if req_engines:
-            params["engines"] = req_engines
-        try:
-            resp = requests.get(endpoint, params=params, timeout=req_timeout)
-            latency_ms = int((time.time() - start_time) * 1000)
-            if resp.status_code == 200:
+
+        def _do_search(query: str) -> dict:
+            """单次检索探针：返回 {ok, status_code, count, titles, unresponsive, error}"""
+            params = {
+                "q": query,
+                "format": "json",
+                "language": "zh-CN",
+                "categories": "general",
+                "safesearch": "1",
+            }
+            if req_engines:
+                params["engines"] = req_engines
+            try:
+                resp = requests.get(f"{target_url}/search", params=params, timeout=req_timeout)
+                if resp.status_code != 200:
+                    return {"ok": False, "status_code": resp.status_code, "count": 0, "titles": [], "unresponsive": [], "error": f"HTTP {resp.status_code}"}
                 data = resp.json()
-                results = data.get("results", [])
-                sample_count = len(results)
-                sample_titles = [item.get("title", "")[:30] for item in results[:3]]
+                items = data.get("results", [])
+                unresponsive = [entry[0] for entry in (data.get("unresponsive_engines", []) or []) if isinstance(entry, (list, tuple)) and entry]
                 return {
-                    "status": "success",
-                    "latency_ms": latency_ms,
+                    "ok": True,
                     "status_code": 200,
-                    "sample_count": sample_count,
-                    "sample_titles": sample_titles,
-                    "message": f"连通测试成功！响应耗时 {latency_ms}ms，检索到 {sample_count} 条健康食谱结果。",
+                    "count": len(items),
+                    "titles": [it.get("title", "")[:30] for it in items[:3]],
+                    "unresponsive": unresponsive,
+                    "error": "",
                 }
-            else:
+            except requests.exceptions.ConnectionError:
+                return {"ok": False, "status_code": 0, "count": 0, "titles": [], "unresponsive": [], "error": "connection"}
+            except requests.exceptions.Timeout:
+                return {"ok": False, "status_code": 0, "count": 0, "titles": [], "unresponsive": [], "error": "timeout"}
+            except Exception as err:
+                return {"ok": False, "status_code": 0, "count": 0, "titles": [], "unresponsive": [], "error": str(err)[:120]}
+
+        start_time = time.time()
+
+        # 第一跳：通用中文检索探针（验证上游引擎真实可用性，不带白名单限制）
+        general = _do_search("新生儿黄疸 护理")
+        latency_ms = int((time.time() - start_time) * 1000)
+
+        # 连接层失败：实例不可达 / 超时
+        if not general["ok"] and general["error"] in ("connection", "timeout"):
+            if general["error"] == "connection":
                 return {
                     "status": "failed",
                     "latency_ms": latency_ms,
-                    "status_code": resp.status_code,
-                    "message": f"SearXNG 服务返回异常 HTTP 状态码: {resp.status_code}。",
+                    "message": f"无法连接到 SearXNG 服务 ({target_url})，请检查网络连接与服务端口。",
                 }
-        except requests.exceptions.ConnectionError:
-            latency_ms = int((time.time() - start_time) * 1000)
-            return {
-                "status": "failed",
-                "latency_ms": latency_ms,
-                "message": f"无法连接到 SearXNG 服务 ({target_url})，请检查网络连接与服务端口。",
-            }
-        except requests.exceptions.Timeout:
             return {
                 "status": "failed",
                 "latency_ms": int(req_timeout * 1000),
-                "message": f"请求 SearXNG 超时 (>{req_timeout}s)，请检查服务负载。",
+                "message": f"请求 SearXNG 超时 (>{req_timeout}s)，请检查服务负载与网络延迟。",
             }
-        except Exception as err:
+        if not general["ok"]:
             return {
                 "status": "failed",
-                "message": f"连通性测试发生异常: {str(err)}",
+                "latency_ms": latency_ms,
+                "status_code": general["status_code"],
+                "message": f"SearXNG 服务返回异常 HTTP 状态码: {general["status_code"]}（常见原因：实例未开启 JSON 输出格式，需在实例 settings.yml 的 search.formats 中添加 json）。",
             }
+
+        # 第二跳：权威健康白名单通道探针
+        domains = [d.strip() for d in str(health_domains or ",".join(cls.get_health_domains())).split(",") if d.strip()]
+        site_clauses = " OR ".join([f"site:{d}" for d in domains[:4]])
+        health = _do_search(f"孕期营养食谱 ({site_clauses})")
+
+        unresponsive_all = sorted(set(general["unresponsive"] + health["unresponsive"]))
+        base = {
+            "latency_ms": latency_ms,
+            "status_code": 200,
+            "sample_count": general["count"],
+            "health_count": health["count"] if health["ok"] else 0,
+            "sample_titles": general["titles"],
+            "unresponsive_engines": unresponsive_all,
+        }
+
+        # 实例可达，但通用检索 0 条：上游引擎被封禁/限流/无结果
+        if general["count"] == 0:
+            hint_engines = f"，失效引擎：{('、'.join(unresponsive_all))}" if unresponsive_all else ""
+            return {
+                **base,
+                "status": "warning",
+                "message": (
+                    f"实例已连通（{latency_ms}ms），但通用检索返回 0 条结果{hint_engines}。"
+                    "通常为 SearXNG 出口 IP 被上游搜索引擎 CAPTCHA/限流封禁，"
+                    "请到 SearXNG 实例检查引擎状态、更换出口 IP/配置代理，"
+                    "或在下方「指定检索源引擎」填写实例上可用的引擎。"
+                ),
+            }
+
+        # 通用检索正常
+        health_note = f"，权威健康通道 {health["count"]} 条" if health["ok"] else ""
+        hint_engines = f"；另有引擎暂不可用：{('、'.join(unresponsive_all))}" if unresponsive_all else ""
+        return {
+            **base,
+            "status": "success",
+            "message": f"连通测试成功！响应耗时 {latency_ms}ms，通用检索 {general["count"]} 条{health_note}{hint_engines}。",
+        }
 
     @classmethod
     def sync_to_env(

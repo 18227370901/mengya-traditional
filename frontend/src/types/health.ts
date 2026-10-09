@@ -122,15 +122,20 @@ export interface SearXNGConfig {
   health_domain_list?: string[];
   is_available: boolean;
   can_manage?: boolean;
-  /** AI 助手公网引擎兑底开关（管理员可控，默认关闭） */
+  /** AI 助手公网引擎兜底开关（管理员可控，默认关闭） */
   ai_fallback_enabled?: boolean;
 }
 
 export interface SearXNGTestResult {
-  status: "success" | "failed";
+  /** v1.55.1：warning = 实例可达但上游引擎无结果（被限流/验证码封禁） */
+  status: "success" | "warning" | "failed";
   latency_ms?: number;
   status_code?: number;
   sample_count?: number;
+  /** v1.55.1：权威健康白名单通道检索样本数 */
+  health_count?: number;
   sample_titles?: string[];
+  /** v1.55.1：SearXNG 返回的暂不可用引擎清单 */
+  unresponsive_engines?: string[];
   message: string;
 }

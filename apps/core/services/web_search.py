@@ -483,12 +483,17 @@ def search_for_ai(query: str, max_results: int = 5) -> dict:
                 result["engine"] = "SearXNG"
                 result["status"] = "searxng"
                 return result
+            # v1.55.1：实例可达但检索 0 条（上游引擎被 CAPTCHA/限流封禁或无相关索引），
+            # 透出精确诊断状态，供前端徽章与管理员排查；后续兜底分支不得覆盖此状态
+            result["status"] = "searxng_empty"
     except Exception:
         pass
 
     # ===== 2. 管理员兜底开关：公网引擎管线（默认关闭）=====
     if not _is_ai_fallback_enabled():
-        result["status"] = "unavailable"
+        # v1.55.1：保留 searxng_empty 诊断状态（实例活着但引擎无结果），仅其余情况标记 unavailable
+        if result["status"] != "searxng_empty":
+            result["status"] = "unavailable"
         return result
 
     try:

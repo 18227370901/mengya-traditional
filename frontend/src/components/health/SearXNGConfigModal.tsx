@@ -274,25 +274,35 @@ export default function SearXNGConfigModal({
                 className={`rounded-xl border p-3.5 text-xs transition-all ${
                   testResult.status === "success"
                     ? "border-emerald-200 bg-emerald-50/70 text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-300"
+                    : testResult.status === "warning"
+                    ? "border-amber-200 bg-amber-50/70 text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-300"
                     : "border-red-200 bg-red-50/70 text-red-800 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-300"
                 }`}
               >
                 <div className="flex items-center gap-2 font-semibold">
                   {testResult.status === "success" ? (
                     <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                  ) : testResult.status === "warning" ? (
+                    <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
                   ) : (
                     <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
                   )}
                   <span>
-                    {testResult.status === "success" ? "测试成功" : "测试未通过"}：
+                    {testResult.status === "success" ? "测试成功" : testResult.status === "warning" ? "连通但引擎异常" : "测试未通过"}：
                     {testResult.message}
                   </span>
                 </div>
-                {testResult.status === "success" && (
+                {testResult.status !== "failed" && (
                   <div className="mt-2 space-y-1 text-[11px] text-emerald-700 dark:text-emerald-400">
                     <div>
-                      响应耗时：<b>{testResult.latency_ms} ms</b> · 检索样本：
+                      响应耗时：<b>{testResult.latency_ms} ms</b> · 通用检索样本：
                       <b>{testResult.sample_count} 条</b>
+                      {typeof testResult.health_count === "number" && (
+                        <>
+                          {" "}· 权威健康通道：
+                          <b>{testResult.health_count} 条</b>
+                        </>
+                      )}
                     </div>
                     {testResult.sample_titles && testResult.sample_titles.length > 0 && (
                       <div className="border-t border-emerald-200/50 pt-1 dark:border-emerald-900/40">
@@ -302,6 +312,12 @@ export default function SearXNGConfigModal({
                             • {t}
                           </div>
                         ))}
+                      </div>
+                    )}
+                    {testResult.unresponsive_engines && testResult.unresponsive_engines.length > 0 && (
+                      <div className="border-t border-amber-200/60 pt-1 text-amber-700 dark:border-amber-900/40 dark:text-amber-400">
+                        <span className="font-medium">暂不可用引擎：</span>
+                        {testResult.unresponsive_engines.slice(0, 8).join("、")}
                       </div>
                     )}
                   </div>

@@ -29,7 +29,7 @@ interface ChatData {
   error_hint?: string;
   session_id?: number;
   session_title?: string;
-  /** v1.55：实时检索状态 searxng / fallback:<engine> / unavailable / skipped */
+  /** v1.55：实时检索状态 searxng / searxng_empty / fallback:<engine> / unavailable / skipped */
   search_status?: string;
   /** v1.55：SearXNG 实时检索来源列表 */
   sources?: ChatSource[];
@@ -355,6 +355,11 @@ export default function AIAssistantPage() {
                           <span className="text-gray-400">{expandedSourceMsg === i ? "收起" : "展开"}</span>
                         )}
                       </button>
+                    ) : m.search_status === "searxng_empty" ? (
+                      <span className="flex items-center gap-1 text-[11px] text-amber-500 dark:text-amber-400" title="SearXNG 实例已连通，但其上游引擎未返回结果（常见于出口 IP 被搜索引擎限流/验证码封禁），本次回答基于 AI 知识库">
+                        <Globe className="h-3 w-3" />
+                        SearXNG 已连接但实例引擎无结果，回答基于 AI 知识库{isAdmin ? "（可在 SearXNG 配置中排查）" : ""}
+                      </span>
                     ) : m.search_status === "unavailable" ? (
                       <span className="flex items-center gap-1 text-[11px] text-gray-400">
                         <Globe className="h-3 w-3" />

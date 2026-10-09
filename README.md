@@ -768,6 +768,11 @@ mengya-local/
 - **前端 `AIAssistantPage`**：消息级检索状态徽章（`SearXNG实时检索` 绿色 / `未接入实时检索，回答基于 AI 知识库（可配置 SearXNG）` 灰色 / `公网引擎检索` 蓝色）、来源列表可展开折叠、管理员头部「SearXNG 引擎配置」入口（复用 `SearXNGConfigModal`）；
 - **公网兜底开关**（管理员可控）：`SearXNGConfigModal` 新增 `AI 助手公网引擎兜底 (AI_SEARCH_FALLBACK_ENABLED)` 开关，随配置接口一键同步写回 `.env`；`.env` / `.env.example` / `config/settings.py` 三方固化，默认关闭。
 
+#### 14.6 SearXNG 接入链路诊断增强与配置生效修复 (v1.55.1)
+- **`SEARXNG_ENGINES` 配置生效修复**：`SearXNGClient.search()` 在未显式指定 engines 参数时自动回退管理员配置的 `SEARXNG_ENGINES`，使「指定检索源引擎」配置真正在 AI 助手 / 健康 / 食谱检索链路中生效（此前仅连通性测试使用该配置）；
+- **`searxng_empty` 精确状态**：`search_for_ai()` 区分「实例不可达」（`unavailable`）与「实例可达但上游引擎被 CAPTCHA/限流封禁返回 0 条结果」（`searxng_empty`），兜底分支不再覆盖该诊断状态；AI 助手页对应新增橙色警示徽章「SearXNG 已连接但实例引擎无结果，回答基于 AI 知识库」；
+- **连通性测试两跳诊断**：`test_connection()` 升级为「通用检索探针（验证引擎可用性）+ 权威健康白名单通道探针」两跳测试，新增 `warning` 状态（实例连通但通用检索 0 条）、`health_count` 与 `unresponsive_engines` 字段；配置弹窗以橙色样式展示失效引擎清单与修复指引（检查实例引擎状态 / 更换出口 IP / 配置代理 / 指定可用引擎），HTTP 403 时提示实例需开启 JSON 输出格式。
+
 #### 14.5 涉及文件清单
 - 后端：`apps/core/services/gestation_engine.py`（新增）、`apps/core/services/web_search.py`、`apps/core/services/ai_service.py`、`apps/core/services/searxng_client.py`、`apps/core/views.py`、`apps/core/views_searxng.py`、`apps/core/serializers/__init__.py`、`apps/core/serializers/health.py`、`config/settings.py`、`.env` / `.env.example`；
 - 前端：`frontend/src/components/health/UnifiedHealthCheckIn.tsx`（新增）、`SearXNGConfigModal.tsx`、`BmiFormCard.tsx`、`BmiHistoryTable.tsx`、`BmiTimeSeriesBoard.tsx`、`BmiAnalysisView.tsx`、`frontend/src/pages/HealthPage.tsx`、`frontend/src/pages/AIAssistantPage.tsx`、`frontend/src/store/chatStore.ts`、`frontend/src/types/health.ts`。

@@ -1459,6 +1459,12 @@ apps/core/                                    apps/core/
     <li><strong>AI 前端状态透出</strong>：<code>AIAssistantPage</code> 消息级检索徽章（SearXNG 实时检索绿色 / 未接入实时检索灰色 / 公网引擎蓝色）+ 来源列表展开折叠 + 管理员头部 SearXNG 配置入口；<code>SearXNGConfigModal</code> 新增公网兜底开关并随配置接口同步 <code>.env</code>；</li>
     <li><strong>验证结论</strong>：v1.55 冒烟测试 29/29 通过；浏览器全链路验证通过（三种打卡模式归档 / 孕周 5 周矛盾被 400 精确拦截 / 基线继承 / 生长曲线与孕产记录互不混数 / AI 灰色徽章降级提示 / 兜底开关默认关闭）。</li>
   </ul>
+  <h4 style="color:#1e293b;font-size:15px;margin-top:12px;">10.16.3 SearXNG 接入链路诊断增强与配置生效修复 (v1.55.1)</h4>
+  <ul style="color:#334155;line-height:1.6;">
+    <li><strong>问题定位</strong>：用户反馈 AI 助手"未接入 SearXNG"——实测实例 <code>100.64.0.1:8090</code> 连通正常（<code>/healthz</code> 193ms、JSON 已开启），根因为 SearXNG 实例默认通用引擎全部被上游封禁（brave 限流、duckduckgo/qwant/startpage CAPTCHA、google 静默 0 结果、bing 返回无关结果），检索恒为 0 条；叠加平台侧缺陷：<code>SEARXNG_ENGINES</code> 配置从未在检索链路生效、"0 结果"与"不可达"混为 <code>unavailable</code>、连通测试 0 条仍报成功；</li>
+    <li><strong>修复落地</strong>：<code>SearXNGClient.search()</code> engines 为空时回退 <code>SEARXNG_ENGINES</code> 配置；<code>search_for_ai()</code> 新增 <code>searxng_empty</code> 精确状态（实例可达但 0 结果），前端新增橙色警示徽章；<code>test_connection()</code> 两跳诊断新增 <code>warning</code> 状态与 <code>unresponsive_engines</code> 失效引擎清单透出，弹窗橙色展示修复指引；</li>
+    <li><strong>验证结论</strong>：shell 实测 <code>search_for_ai</code> → <code>searxng_empty</code>、<code>test_connection</code> → <code>warning</code>（757ms + brave/duckduckgo/qwant/startpage 失效清单）；浏览器实测橙色徽章与弹窗诊断正常显示。实例侧引擎修复（更换出口 IP / 配置代理 / 启用可用引擎）由 SearXNG 部署机管理员执行。</li>
+  </ul>
 </div>
 
 </body>

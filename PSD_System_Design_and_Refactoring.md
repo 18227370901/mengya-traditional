@@ -895,3 +895,11 @@ done
    - `ai_chat` 响应新增 `search_status` / `sources`，`latency_ms` 修复为真实耗时；
    - 前端 `AIAssistantPage` 消息级徽章（SearXNG 实时检索绿色 / 未接入实时检索灰色 / 公网引擎蓝色）+ 来源列表展开折叠 + 管理员头部 SearXNG 配置入口；`SearXNGConfigModal` 新增公网兜底开关并随配置接口同步 `.env`。
 6. **验证结论**：v1.55 冒烟测试 29/29 通过（孕周引擎锚点推算 / 矛盾拦截 / 序列化器校验 / 语义归档 / 基线继承 / 口径分离 / AI 检索链路 / 兜底开关真实生效），浏览器全链路逐项验证通过（三种打卡模式归档 / 孕周 5 周矛盾被 400 精确拦截 / 累计增重基线继承 / 生长曲线与孕产记录互不混数 / AI 灰色徽章"未接入实时检索" / 兜底开关文案与默认关闭状态）。
+
+#### 10.16.3 SearXNG 接入链路诊断增强与配置生效修复 (v1.55.1)
+1. **问题定位**：用户反馈 AI 助手"未接入 SearXNG"——实测实例 `http://100.64.0.1:8090` 连通正常（`/healthz` 193ms、JSON 输出已开启），根因为 SearXNG 实例的默认通用引擎全部被上游封禁（brave 限流、duckduckgo/qwant/startpage CAPTCHA、google 静默 0 结果、wikipedia 中文无索引、bing 返回无关结果），检索恒为 0 条；叠加平台侧缺陷——`SEARXNG_ENGINES` 配置项从未在检索链路生效、`search_for_ai` 将"0 结果"与"不可达"混为 `unavailable`、连通性测试 0 条结果仍报"成功"；
+2. **修复落地**：
+   - `SearXNGClient.search()` engines 参数为空时回退 `SEARXNG_ENGINES` 配置（配置真正生效）；
+   - `search_for_ai()` 新增 `searxng_empty` 精确状态（实例可达但 0 结果），兜底分支不覆盖；前端 AI 助手页新增橙色警示徽章；
+   - `test_connection()` 两跳诊断（通用探针 + 权威白名单探针）新增 `warning` 状态、`health_count`、`unresponsive_engines` 透出，弹窗橙色展示失效引擎清单与修复指引；
+3. **验证结论**：shell 实测 `search_for_ai("新生儿黄疸怎么办？")` → `searxng_empty`；`test_connection()` → `warning` + 失效引擎 `brave/duckduckgo/qwant/startpage`；浏览器实测新消息橙色徽章、弹窗橙色"连通但引擎异常"诊断（757ms + 失效引擎清单）均正常显示。实例侧引擎修复（更换出口 IP / 配置代理 / 启用可用引擎）由 SearXNG 实例管理员在部署机执行。
