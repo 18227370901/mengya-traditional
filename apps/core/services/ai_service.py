@@ -464,7 +464,19 @@ def ai_evaluate_product(product, user=None) -> dict:
     price_info = product.price_info or {}
     specs = {k: v for k, v in (product.specifications or {}).items() if "接口" not in k and "isofix" not in str(v).lower()}
     
-    prompt = f"""请对以下母婴商品进行全面专业的深度评测：
+    # 联网检索外部真实舆情、抽检合格性与召回缺陷（通过 SearXNG 赋能）
+    external_context = ""
+    try:
+        from apps.core.services.searxng_client import SearXNGClient
+        s_query = f"{product.brand} {product.name} 质量抽检 评测 缺陷 召回"
+        s_res = SearXNGClient.search(s_query, max_results=3)
+        if s_res:
+            lines = [f"- 《{r["title"]}》: {r["body"][:150]}" for r in s_res]
+            external_context = "\n【互联网质检与消协评测参考(SearXNG)】:\n" + "\n".join(lines)
+    except Exception:
+        pass
+
+    prompt = f"""请对以下母婴商品进行全面专业的深度评测：{external_context}
 【商品名称】: {product.brand} {product.name}
 【品类】: {cat_label} - {product.second_category}
 【规格参数】: {specs}
