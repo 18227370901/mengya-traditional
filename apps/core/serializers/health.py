@@ -60,6 +60,11 @@ class BmiAnalysisInputSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
     )
+    # v1.57：同日重复打卡覆盖开关（检测到当日已有记录时，前端确认后携 true 覆盖更新）
+    overwrite = serializers.BooleanField(
+        default=False,
+        required=False,
+    )
     waist_circumference_cm = serializers.FloatField(
         min_value=30.0,
         max_value=200.0,
@@ -78,6 +83,15 @@ class BmiAnalysisInputSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         stage = attrs.get("stage_type", "pregnancy")
+        # v1.57：测量日期硬拦截——不能晚于今天（补录回溯合理，未来预填会污染时序图与孕周引擎）
+        record_date = attrs.get("record_date")
+        if record_date:
+            from django.utils import timezone
+
+            if record_date > timezone.localdate():
+                raise serializers.ValidationError(
+                    {"record_date": "测量日期不能晚于今天，请选择今天或之前的日期"}
+                )
         if stage == "postpartum":
             if attrs.get("postpartum_months") is None:
                 attrs["postpartum_months"] = 1

@@ -924,3 +924,29 @@ done
 #### 10.17.3 验证结论
 - 后端 `Django check` 通过；`stage=general` 序列化/评估冒烟通过（BMI 22.58 正常、文案「非孕期体重管理阶段」）；
 - 浏览器全链路验证通过：4-Tab 结构、BMI 状态卡（当前 20.7 正常）、BmiFormCard 三阶段按钮、打卡弹窗四模式（无重复）、非孕期打卡归档（toast「已归档」+ 历史表阶段「非孕期」+ 明细徽章）、宝宝 WHO 参考线、疫苗下一针建议（乙肝第1剂·宝宝 32 个月）、时间轴点 15 日弹窗预填 2026-10-15、AI 配置页搜索区块（实例可达 + 兜底已开启）、AI 助手新消息蓝色「公网实时检索（Bing）· 5 条来源」徽章、BMI 页与 AI 页无配置入口、`Cache-Control: no-cache` 生效；验证数据已清理（用户历史记录保留）。
+
+### 10.18 健康数据严谨性 · 列表管理 · 工程瘦身 · 临床赋能 (v1.57)
+
+#### 10.18.1 业务背景与改造目标
+1. **数据严谨性缺位**：打卡/BMI 归档/宝宝测量均无同日唯一性校验，同日反复提交产生重复记录污染时序图；打卡日期可任填未来日期；宝宝测量无数值范围提示；
+2. **列表管理能力不足**：三处数据列表（妈妈历史表/明细卡片流/宝宝测量表）仅支持逐条删除且无分页，数据增多后页面冗长、批量清理低效；删除确认交互三处不统一（window.confirm / 两段式按钮）；
+3. **「收起本次分析结果」按钮体验缺陷**：点击后清空 result——非孕期模式报告区块内容少视觉变化极小，且按钮随 result 消失无法再展开，被用户判定为"无反应"；
+4. **权限模块欠账**：`menu_health` 与 CRUD 权限描述仍为旧 5-Tab 语义；BMI 分析接口写库但仅校验菜单级权限，存在越权写入漏洞；
+5. **工程三项阶段目标**：主包体积瘦身（echarts/React 全家桶混装 ~1MB）、SearXNG 引擎配置手工输入低效 + 外部食谱卡片食材缺失、临床实用能力（A4 报告导出 / 蓝牙秤/Apple Health 数据导入）缺位。
+
+#### 10.18.2 架构设计与实现落地
+1. **同日唯一 + 覆盖更新引擎**：`HealthRecordViewSet.create` 与 `HealthBmiAnalysisView.post` 双链路查重（user + record_type + record_date，`UNIQUE_DATE_TYPES = (prenatal_exam, growth_measurement)`，疫苗豁免）；命中返回 `409 + code 4090 + existing 摘要`，前端确认后携 `overwrite=true` 重发——妈妈链路后端原地更新当日记录并重新生成评估（`record_action=updated`），宝宝链路 `PATCH` 原记录；保留 id 与 created_at 不产生重复数据；
+2. **未来日期硬拦截**：`BmiAnalysisInputSerializer` 与 `HealthRecordSerializer` 层校验 record_date ≤ 今天（400 精确提示）+ 前端 date input `max=今天` 双防线；**宝宝数值软提示**（身高 30~140 / 体重 0.5~40 / 头围 25~60 外黄色警示不阻断，满足特殊医学场景）；
+3. **列表管理组件化**：新增 `useListPagination` Hook（分页 + 页大小 localStorage 记忆）+ `PaginationBar`（页码省略号导航 + 5/10/20/50 选择器）+ `ConfirmDialog`（红色二次确认弹窗），四处列表接入（含疫苗 Tab 新增「全部接种记录」管理区）；批量删除走后端新接口 `batch-delete`（单事务 + 200 条/次上限 + 仅本人 + 逐条审计）；
+4. **报告可逆折叠**：`reportCollapsed` 状态 + 常驻切换按钮（Chevron 图标），收起仅隐藏区块不丢数据，重新分析自动展开；
+5. **权限同步与漏洞修复**：`PERMISSION_DEFINITIONS` 五项描述更新 4-Tab 语义（含 CSV 导入/批删能力说明）；BMI 接口补齐 `health_record_view`（GET 时序）与 `health_record_create`（POST 归档）细粒度校验；
+6. **工程瘦身**：`manualChunks` 分包（echarts 1MB / react-vendor 190KB / router 22KB / axios 51KB / pdf-tools 593KB 独立），主包 453KB（gzip 116KB）；`BmiTimeSeriesBoard` 重构为 init 一次 + `setOption({notMerge})` 热更新 + ResizeObserver 自适应，容器常驻挂载；
+7. **SearXNG 预设与食谱结构化**：配置弹窗三档预设一键填入（国内优选 bing,sogou / 仅 bing / 国际组合）+ ✓ 选中态 + 一键清空；`extract_ingredients_from_text()` 数量型/适量型双正则 + 动词干扰词过滤提取食材用量填充外部推荐卡片；
+8. **临床赋能**：`HealthReportExport` A4 报告（四区块 + iframe 打印 + html2canvas/jsPDF 动态加载多页切片下载）；`CsvImportModal` 双对象导入（mom/baby 模板、解析预览+本地预检、冲突策略 skip/overwrite、逐行错误明细、500 条上限、基线继承）。
+
+#### 10.18.3 验证结论
+- 后端冒烟 22 项全部通过：正则提取（菠菜100克、鸡蛋2个、牛奶250ml、盐+适量/干扰句排除）、BMI 链路（首次 created → 同日 409 → 覆盖 updated → 未来日期 400）、宝宝链路（首次/409/覆盖）、疫苗同日两剂不查重、批量删除、CSV 导入（新增/跳过/错误行明细）；
+- 构建验证：主包 453KB（gzip 116KB），echarts/pdf-tools/react-vendor/router/axios 五独立 chunk，pdf-tools 按需加载；
+- 浏览器全链路验证通过：宝宝头围超范围软提示（改正即消失）+ 日期 max 防呆、宝宝/妈妈/深度表单三链路 409 覆盖（含当日已有数据摘要展示）、收起/展开可逆折叠（数据保留）、四处列表勾选/全选本页/批删确认弹窗（涉及清单展示）、分页（默认 5 条/页、9 条数据 5+4 分布、切 10/页、localStorage 记忆）、批量删除精确清理 8 条测试数据（用户原有记录保留）、疫苗全量记录区（同日两剂 + 批删还原）、A4 报告四区块渲染 + PDF 实际下载（萌芽孕产健康评估报告_20261010.pdf）、CSV 导入（解析预览 + skip 策略：新增1/跳过1/失败2 含行级错误原因）、SearXNG 三预设填入/✓高亮/清空、权限矩阵新描述展示、修复版包 console 零 JS 错误；
+- 测试期间发现并修复一个真实缺陷：`CsvImportModal` 的 useMemo 位于 `if (!isOpen) return null` 之后导致 React #310 hooks 数量不一致整树崩溃白屏，修复后（hooks 全部前置 + 注释固化规范）复验通过；
+- 验证数据全部清理（妈妈/宝宝/疫苗测试记录 12 条 + 冒烟脚本 + 下载 PDF 回收站），用户原有数据（2026-05-08 孕1周打卡、2026-09-10 宝宝测量）完好保留，`.env` 配置未被测试触碰。

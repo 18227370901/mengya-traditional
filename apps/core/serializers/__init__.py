@@ -436,11 +436,22 @@ class HealthRecordSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         """
-        孕周一致性校验引擎（妈妈记录 prenatal_exam 专属）：
-        1. 已有推算基准（档案预产期或首次打卡锚点）时，手填孕周偏差 > 1 周直接拦截并提示正确值；
-        2. 未手填孕周时自动按基准填充，杜绝"日期与孕周矛盾"的脏数据。
+        数据合理性校验引擎：
+        1. 未来日期硬拦截（v1.57）：打卡/测量/接种均为已发生事实，record_date 不能晚于今天；
+        2. 孕周一致性校验引擎（妈妈记录 prenatal_exam 专属）：
+           - 已有推算基准（档案预产期或首次打卡锚点）时，手填孕周偏差 > 1 周直接拦截并提示正确值；
+           - 未手填孕周时自动按基准填充，杜绝"日期与孕周矛盾"的脏数据。
         """
         record_type = attrs.get("record_type")
+        # v1.57：仅当本次提交显式携带 record_date 时校验（PATCH 局部更新未改日期不受影响）
+        record_date = attrs.get("record_date")
+        if record_date:
+            from django.utils import timezone
+
+            if record_date > timezone.localdate():
+                raise serializers.ValidationError(
+                    {"record_date": "记录日期不能晚于今天，请选择今天或之前的日期"}
+                )
         if record_type == "prenatal_exam":
             request = self.context.get("request")
             user = getattr(request, "user", None)

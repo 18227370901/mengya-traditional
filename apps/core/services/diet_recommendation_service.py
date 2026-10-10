@@ -6,6 +6,7 @@
 安全保障：孕产期禁忌食材全量扫描过滤 + 医疗级免责声明
 """
 import logging
+import re
 from typing import Any, Dict, List, Optional
 from apps.core.models.recipe import Recipe
 from apps.core.services.searxng_client import SearXNGClient
@@ -30,6 +31,47 @@ DISCLAIMER_TEXT = (
 
 class DietRecommendationService:
     """双通道个性化膳食与生活方式方案生成器"""
+
+    # v1.57 食材用量正则：匹配中文食谱正文中「食材+用量」片段，如 "鸡蛋2个""菠菜100克""盐 3g""牛奶250ml"
+    # 数量型：鸡蛋2个 / 大米100克 / 牛奶250ml（单位后可紧跟动词如"焯水"，不设前瞻限制）
+    _INGREDIENT_QTY_PATTERN = re.compile(
+        r"([\u4e00-\u9fa5]{1,6})\s*(\d+(?:\.\d+)?)\s*(个|只|枚|片|张|段|勺|杯|碗|根|颗|滴|瓣|条|块|克|g|G|千克|kg|KG|公斤|毫升|ml|mL|升|L|毫克|mg)"
+    )
+    # 适量/少许型：盐适量 / 葱花少许
+    _INGREDIENT_FREE_PATTERN = re.compile(r"([\u4e00-\u9fa5]{1,6})\s*(?:适量|少许|少量|些许)")
+    # 干扰词排除：非食材动词/量词开头，避免"洗净2个""切块300克"之类误提取
+    _NOISE_PREFIXES = ("洗净", "切块", "切片", "切丁", "切段", "去皮", "锅中", "加入", "倒入", "热锅", "大火", "小火", "中火", "煮熟", "烧开", "翻炒", "搅拌", "腌制", "提前", "适量即可", "焯水", "打散", "蒸熟", "浸泡", "备用")
+
+    @classmethod
+    def extract_ingredients_from_text(cls, text: str, limit: int = 6) -> str:
+        """从外部检索正文/标题中正则提取食材用量列表，补全推荐卡片细节。
+
+        搜索结果正文通常是食谱简介（如"菠菜100克焯水，鸡蛋2个打散……"），
+        提取前 limit 个「食材+用量」片段拼接为简短清单；提取不到时返回空串，
+        由调用方回退到默认占位文案。
+        """
+        if not text:
+            return ""
+        hits: list = []
+        seen: set = set()
+
+        def _try_add(name: str, qty: str, unit: str) -> None:
+            if len(hits) >= limit or not name or name in seen:
+                return
+            if any(w in name for w in cls._NOISE_PREFIXES) or any(name.startswith(w) for w in cls._NOISE_PREFIXES):
+                return
+            seen.add(name)
+            hits.append(f"{name}{qty}{unit}")
+
+        for match in cls._INGREDIENT_QTY_PATTERN.finditer(text):
+            _try_add(match.group(1), (match.group(2) or "").strip(), (match.group(3) or "").strip())
+            if len(hits) >= limit:
+                break
+        for match in cls._INGREDIENT_FREE_PATTERN.finditer(text):
+            _try_add(match.group(1), "+", "适量")
+            if len(hits) >= limit:
+                break
+        return "、".join(hits)
 
     @classmethod
     def check_food_safety(cls, text: str) -> tuple[bool, List[str]]:
@@ -124,13 +166,15 @@ class DietRecommendationService:
             if not safe:
                 continue
             domain = res.get("source_domain") or "权威健康机构"
+            # v1.57 食谱深度结构化：从检索正文正则提取食材用量列表，补全外部推荐卡片细节
+            ingredients = cls.extract_ingredients_from_text(f"{res['title']} {res['body']}")
             items.append({
                 "meal_name": res["title"][:28],
                 "nutrient_tag": "权威联网推荐",
                 "source_type": "searxng_fallback",
                 "source_badge": f"[外部检索: {domain}]",
                 "source_url": res["href"],
-                "ingredients": "详见权威来源网页解析",
+                "ingredients": ingredients if ingredients else "详见权威来源网页解析",
                 "benefits": res["body"][:140],
                 "safety_passed": True,
             })

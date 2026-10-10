@@ -207,6 +207,7 @@ export default function BmiFormCard({ onSubmit, loading, initialHeight, initialP
               type="date"
               className="input font-medium"
               value={recordDate}
+              max={new Date().toISOString().slice(0, 10)}
               onChange={(e) => setRecordDate(e.target.value)}
               required
             />

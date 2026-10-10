@@ -227,10 +227,46 @@ export default function SearXNGConfigModal({
               <input
                 type="text"
                 className="input"
-                placeholder="例如 bing,google,duckduckgo 或留空"
+                placeholder="例如 bing,sogou,google 或留空"
                 value={form.engines}
                 onChange={(e) => setForm({ ...form, engines: e.target.value })}
               />
+              {/* v1.57 推荐引擎一键应用预设：国内网络优化源免手输，点击即填入 */}
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+                <span className="text-gray-400">推荐预设：</span>
+                {[
+                  { label: "国内优选 (bing+sogou)", value: "bing,sogou", desc: "国内网络连通性最佳的组合，推荐首选" },
+                  { label: "仅 bing", value: "bing", desc: "微软必应，国内可直连" },
+                  { label: "国际组合 (google+bing)", value: "google,bing", desc: "需实例具备国际网络出口" },
+                ].map((preset) => (
+                  <button
+                    key={preset.value}
+                    type="button"
+                    title={preset.desc}
+                    onClick={() => setForm({ ...form, engines: preset.value })}
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition ${
+                      form.engines === preset.value
+                        ? "bg-brand-500 text-white"
+                        : "bg-gray-100 text-gray-500 hover:bg-brand-50 hover:text-brand-600 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-brand-950/50"
+                    }`}
+                  >
+                    {form.engines === preset.value ? "✓ " : ""}
+                    {preset.label}
+                  </button>
+                ))}
+                {form.engines && (
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, engines: "" })}
+                    className="text-gray-400 underline-offset-2 hover:text-gray-600 hover:underline"
+                  >
+                    清空
+                  </button>
+                )}
+              </div>
+              <p className="mt-1 text-[10px] leading-relaxed text-gray-400">
+                实例上游引擎若被限流/验证码封禁，可在「连通测试」结果中查看具体失效引擎；预设已按国内网络可用性排序
+              </p>
             </div>
 
             <div>

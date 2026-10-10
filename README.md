@@ -815,3 +815,44 @@ mengya-local/
 #### 14.5 涉及文件清单
 - 后端：`apps/core/services/gestation_engine.py`（新增）、`apps/core/services/web_search.py`、`apps/core/services/ai_service.py`、`apps/core/services/searxng_client.py`、`apps/core/views.py`、`apps/core/views_searxng.py`、`apps/core/serializers/__init__.py`、`apps/core/serializers/health.py`、`config/settings.py`、`.env` / `.env.example`；
 - 前端：`frontend/src/components/health/UnifiedHealthCheckIn.tsx`（新增）、`SearXNGConfigModal.tsx`、`BmiFormCard.tsx`、`BmiHistoryTable.tsx`、`BmiTimeSeriesBoard.tsx`、`BmiAnalysisView.tsx`、`frontend/src/pages/HealthPage.tsx`、`frontend/src/pages/AIAssistantPage.tsx`、`frontend/src/store/chatStore.ts`、`frontend/src/types/health.ts`。
+
+## 16. 健康数据严谨性与列表管理增强 · 工程瘦身 · 临床赋能（v1.57）
+
+### 16.1 数据合理性校验（同日唯一 + 覆盖更新 + 未来日期拦截）
+- **同日唯一原则**：测量类记录（妈妈 `prenatal_exam` / 宝宝 `growth_measurement`）同一用户同一日期只保留一条——两条录入链路（打卡弹窗 / 深度 BMI 表单）后端统一查重，命中返回 **409 + 当日已有数据摘要**（体重/身高/阶段）；
+- **覆盖弹窗**：前端捕获 409 后弹出确认（打卡弹窗内联琥珀色确认条 / 深度表单 ConfirmDialog），用户确认后携 `overwrite=true` 重发，后端**原地更新当日记录**（保留记录 id 与归档时间，不产生重复数据）；妈妈链路覆盖后自动重新生成评估报告，宝宝链路直接 PATCH 原记录；
+- **未来日期硬拦截**：所有健康记录（打卡/测量/疫苗）`record_date` 不能晚于今天（serializer 层校验 400 + 前端 date input `max=今天` 双重防线），杜绝时序图与孕周引擎被未来数据污染；
+- **疫苗不查重**：同日可接种多剂（乙肝+卡介苗同天），`vaccination` 类型豁免同日唯一约束；
+- **宝宝数值软提示**：身高 30~140 / 体重 0.5~40 / 头围 25~60 之外的录入仅作**黄色警示提示，不限制输入**（满足特殊医学场景自由录入需求）。
+
+### 16.2 列表管理（勾选批量删除 + 分页，四处列表全覆盖）
+- 四处数据列表统一接入：**妈妈 Tab 测量打卡历史表**、**妈妈打卡明细卡片流**、**宝宝 Tab 测量记录表**、**疫苗 Tab 全部接种记录区**（新增区块）；
+- 单选 / 多选 / **全选当前页**（跨页不选中防误删）→「删除所选 (N)」→ **红色二次确认弹窗**（列出涉及日期/疫苗名清单）→ 后端单事务批量删除（`POST /api/health/records/batch-delete/`，200 条/次上限，仅删本人记录，逐条审计）；
+- **分页显示**：默认 **5 条/页**，可选 5/10/20/50，页码导航带省略号；**每页条数偏好 localStorage 持久化**（各列表独立记忆）；删除后当前页清空自动回退；
+- 删除确认交互统一：全部替换原 `window.confirm` 与表格内两段式按钮，统一为全屏 ConfirmDialog（危险红色样式 + 操作明细）；
+- 历史脏数据检测：历史表检测到同日多条时顶部黄色提示「可勾选多余记录批量清理」。
+
+### 16.3 分析报告可逆折叠（「收起按钮无反应」问题修复）
+- 原「收起本次分析结果」按钮点击后将 result 清空——非孕期模式下报告区块内容少视觉变化小，且按钮自身随 result 消失无法再展开，体验缺陷；
+- 改为**常驻可逆折叠按钮**「收起分析报告 ↓ / 展开分析报告 ↑」（Chevron 图标）：收起仅隐藏报告区块（医学预警/指标概览/WS/T 曲线/食谱/运动心理），**数据保留可反复切换**；折叠态显示提示条（数据保留至下次分析）；重新分析后自动切回展开。
+
+### 16.4 权限模块同步 + 越权漏洞修复
+- `permissions.py` 权限定义描述同步 v1.56 4-Tab 新语义：`menu_health`（妈妈孕产档案、宝宝生长档案、疫苗计划与健康时间轴）与 `health_record_view/create/update/delete` 四项 CRUD 描述（含 CSV 批量导入 / 勾选批量删除能力说明），管理员权限矩阵页实时展示；
+- **越权漏洞修复**：BMI 分析接口原仅校验 `menu_health` 菜单权限——分析打卡会自动写库却不校验 `health_record_create`、时序拉取不校验 `health_record_view`；被禁用记录权限的用户可通过分析接口绕过管控写库。v1.57 补齐两项细粒度校验。
+
+### 16.5 工程与打包瘦身（阶段一）
+- `vite.config.ts` 新增 `manualChunks` 分包：**echarts（1MB）/ react-vendor（190KB）/ router（22KB）/ axios（51KB）/ pdf-tools（593KB）** 各自独立 chunk；主包由 ~1MB 减至 **453KB（gzip 116KB）**，长缓存下二次访问直接命中厂商包缓存；
+- PDF 工具链（jspdf + html2canvas）**动态 import 按需加载**——仅在点击「下载 PDF」时才下载 pdf-tools chunk，不影响首屏；
+- `BmiTimeSeriesBoard` 图表生命周期重构：**init 一次 + `setOption` 原地热更新**（`notMerge` 视图切换彻底清理）+ **ResizeObserver 容器级自适应**（替代 window resize 监听），容器常驻挂载避免条件渲染反复重建实例。
+
+### 16.6 SearXNG 引擎预设与食谱深度结构化（阶段二）
+- 管理端引擎配置新增**推荐预设一键应用**：`国内优选 (bing+sogou)`（国内网络最佳实践）、`仅 bing`、`国际组合 (google+bing)`——点击即填入 + 选中态 ✓ 高亮 + 一键清空；
+- 食谱清洗管道增强：`DietRecommendationService.extract_ingredients_from_text()` 正则提取搜索正文中的「食材+用量」（如 菠菜100克、鸡蛋2个、牛奶250ml、盐适量），自动补全外部推荐卡片 ingredients 字段（含动词干扰词过滤），提取不到时回退原占位文案。
+
+### 16.7 评估报告导出与 CSV 批量导入（阶段三·临床赋能）
+- **导出 A4 评估报告**（`HealthReportExport`）：报告四区块——基本信息（身高/当前体重/当前测算 BMI/阶段/打卡次数/孕前基线）、本次评估结论（适宜增重区间/实际增重/医学风险预警）、时序测量打卡明细（全量表格）、医学免责声明；**浏览器打印**（隐藏 iframe 注入站点样式，A4 纸打印/另存为 PDF）与 **PDF 下载**（html2canvas 截图 + jsPDF A4 多页自动切片，动态加载）双通道；
+- **CSV 批量导入**（`CsvImportModal`）：页头「导入数据」入口，面向蓝牙健康秤 / Apple Health 导出数据；支持文件上传 / 文本粘贴 / 模板下载；前端解析预览（行数 + 首行示例 + 本地预检）→ 冲突策略选择（**跳过冲突（推荐）/ 覆盖当日**）→ 后端 `POST /api/health/records/batch-import/` 逐行校验（日期格式/非未来/防呆数值范围）返回**逐行错误明细**（行号+日期+原因）；单次上限 500 条，孕期记录需 week 列，未指定 stage 按档案智能回推，妈妈身高/孕前体重自动继承基线。
+
+### 16.8 涉及文件清单
+- 后端：`apps/core/views.py`（同日查重/409/overwrite/批删/批量导入 + BMI 接口权限补齐）、`apps/core/serializers/health.py`（overwrite + 未来日期）、`apps/core/serializers/__init__.py`（未来日期）、`apps/core/utils/permissions.py`（4-Tab 描述同步）、`apps/core/services/diet_recommendation_service.py`（食材正则提取）；
+- 前端：`frontend/src/pages/HealthPage.tsx`（列表管理+导入入口）、`frontend/src/components/ui/ConfirmDialog.tsx`（新增）、`ui/PaginationBar.tsx`（新增 hook+组件）、`components/VaccineCalendar.tsx`（全量记录管理区）、`components/health/BmiHistoryTable.tsx`（勾选批删分页）、`BmiAnalysisView.tsx`（折叠+批删+409+导出入口）、`BmiFormCard.tsx`（日期 max）、`BmiTimeSeriesBoard.tsx`（图表热更新）、`UnifiedHealthCheckIn.tsx`（409 覆盖链路+软提示+四列布局）、`SearXNGConfigModal.tsx`（预设）、`HealthReportExport.tsx`（新增）、`CsvImportModal.tsx`（新增）、`api/services.ts`、`types/health.ts`、`vite.config.ts`（manualChunks）、`package.json`（jspdf + html2canvas）。

@@ -5,6 +5,8 @@ export type PregnancyStage = "pregnancy" | "postpartum" | "general";
 
 export interface BmiAnalysisInput {
   record_date?: string;
+  /** v1.57：同日重复打卡覆盖开关（后端 409 后用户确认覆盖时携 true） */
+  overwrite?: boolean;
   /** 留空自动继承上次打卡基线（首次打卡时后端初始化） */
   height_cm?: number;
   pre_pregnancy_weight_kg?: number;
@@ -102,6 +104,8 @@ export interface BmiAnalysisResult {
   lifestyle_advice: LifestyleAdvice;
   disclaimer: string;
   created_record_id?: number | null;
+  /** v1.57：created 首次归档 / updated 覆盖当日已有记录 */
+  record_action?: "created" | "updated";
   timeseries?: BmiTimeSeriesRecord[];
   /** 孕周引擎校验结果（自动填充基准/提示语） */
   gestation_check?: {
@@ -139,4 +143,24 @@ export interface SearXNGTestResult {
   /** v1.55.1：SearXNG 返回的暂不可用引擎清单 */
   unresponsive_engines?: string[];
   message: string;
+}
+
+/** v1.57：同日重复打卡 409 冲突载荷（后端 data 字段结构） */
+export interface SameDayConflictPayload {
+  conflict: boolean;
+  conflict_code: number;
+  existing_id: number;
+  existing_date: string;
+  existing_stage: string;
+  existing_weight: number | null;
+  existing_height: number | null;
+  overwrite_supported: boolean;
+}
+
+/** v1.57：CSV 批量导入结果 */
+export interface CsvImportResult {
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: Array<{ row: number; date: string; reason: string }>;
 }

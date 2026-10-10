@@ -83,6 +83,8 @@ interface BmiTimeSeriesBoardProps {
 
 export default function BmiTimeSeriesBoard({ records, loading }: BmiTimeSeriesBoardProps) {
   const chartRef = useRef<HTMLDivElement>(null);
+  // v1.57：图表实例复用——init 一次 + setOption 原地热更新，避免每次数据/主题变化重建实例的性能开销与闪烁
+  const chartInstanceRef = useRef<echarts.ECharts | null>(null);
   const { isDark } = useThemeStore();
   const [viewMode, setViewMode] = useState<ViewMode>("trend");
   const [spanKey, setSpanKey] = useState<SpanKey>("all");
@@ -131,9 +133,9 @@ export default function BmiTimeSeriesBoard({ records, loading }: BmiTimeSeriesBo
   }, [enriched, spanKey]);
 
   useEffect(() => {
-    if (!chartRef.current || filtered.length === 0) return;
+    if (!chartRef.current || !chartInstanceRef.current || filtered.length === 0 || loading) return;
 
-    const chart = echarts.init(chartRef.current);
+    const chart = chartInstanceRef.current;
     const axisLabelColor = isDark ? "#94a3b8" : "#64748b";
     const splitLineColor = isDark ? "#1e293b" : "#f1f5f9";
     const axisLineColor = isDark ? "#334155" : "#e2e8f0";
@@ -398,14 +400,28 @@ export default function BmiTimeSeriesBoard({ records, loading }: BmiTimeSeriesBo
       };
     }
 
-    chart.setOption(option);
-    const onResize = () => chart.resize();
-    window.addEventListener("resize", onResize);
+    // v1.57 热更新：原地 setOption（notMerge 全量替换，视图切换时彻底清理旧系列/坐标轴）
+    chart.setOption(option, { notMerge: true });
+  }, [filtered, viewMode, isDark, loading]);
+
+  // v1.57 图表实例生命周期：挂载时 init 一次 + ResizeObserver 容器级自适应（替代 window resize 监听），卸载时 dispose
+  useEffect(() => {
+    const container = chartRef.current;
+    if (!container) return;
+    const chart = echarts.init(container);
+    chartInstanceRef.current = chart;
+    const observer = new ResizeObserver(() => {
+      if (chartInstanceRef.current) chartInstanceRef.current.resize();
+    });
+    observer.observe(container);
     return () => {
-      window.removeEventListener("resize", onResize);
-      chart.dispose();
+      observer.disconnect();
+      if (chartInstanceRef.current) {
+        chartInstanceRef.current.dispose();
+        chartInstanceRef.current = null;
+      }
     };
-  }, [filtered, viewMode, isDark]);
+  }, []);
 
   const noData = filtered.length === 0;
   const deltaInsufficient = viewMode === "delta" && filtered.length < 2;
@@ -489,20 +505,21 @@ export default function BmiTimeSeriesBoard({ records, loading }: BmiTimeSeriesBo
         </div>
       )}
 
-      {/* 图表主体 */}
-      {loading ? (
-        <p className="py-10 text-center text-sm text-gray-400">时序数据加载中…</p>
-      ) : noData ? (
-        <p className="py-10 text-center text-sm text-gray-400">
-          当前时间跨度内暂无测量打卡数据，完成一次打卡后即可查看趋势与增量分析
-        </p>
-      ) : deltaInsufficient ? (
-        <p className="py-10 text-center text-sm text-gray-400">
-          增量视图需至少两次打卡记录才能对比相邻变化，请再完成一次测量打卡
-        </p>
-      ) : (
+      {/* 图表主体（v1.57：容器常驻挂载，提示层覆盖其上，避免条件渲染导致图表实例反复重建） */}
+      <div className="relative">
         <div ref={chartRef} style={{ height: 320 }} className="w-full" />
-      )}
+        {(loading || noData || deltaInsufficient) && (
+          <div className="absolute inset-0 flex items-center justify-center bg-white/70 dark:bg-gray-900/50">
+            <p className="max-w-[80%] text-center text-sm text-gray-400">
+              {loading
+                ? "时序数据加载中…"
+                : noData
+                ? "当前时间跨度内暂无测量打卡数据，完成一次打卡后即可查看趋势与增量分析"
+                : "增量视图需至少两次打卡记录才能对比相邻变化，请再完成一次测量打卡"}
+            </p>
+          </div>
+        )}
+      </div>
 
       {viewMode === "trend" && !noData && (
         <p className="text-right text-[11px] text-gray-400">

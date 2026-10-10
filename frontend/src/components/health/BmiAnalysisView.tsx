@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Scale, CheckCircle2, ArrowUpRight, ArrowDownRight, RefreshCw } from "lucide-react";
+import { Scale, CheckCircle2, ArrowUpRight, ArrowDownRight, ChevronUp, ChevronDown } from "lucide-react";
 import { healthApi } from "@/api/services";
-import type { BmiAnalysisInput, BmiAnalysisResult, BmiTimeSeriesRecord } from "@/types/health";
+import type { BmiAnalysisInput, BmiAnalysisResult, BmiTimeSeriesRecord, SameDayConflictPayload } from "@/types/health";
 import BmiFormCard from "./BmiFormCard";
 import BmiTimeSeriesBoard from "./BmiTimeSeriesBoard";
 import BmiHistoryTable from "./BmiHistoryTable";
@@ -9,6 +9,8 @@ import MedicalAlertBanner from "./MedicalAlertBanner";
 import WeightGainChart from "./WeightGainChart";
 import DietPlanCard from "./DietPlanCard";
 import LifestyleCareCard from "./LifestyleCareCard";
+import HealthReportExport from "./HealthReportExport";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
 
 export default function BmiAnalysisView() {
   const [loading, setLoading] = useState<boolean>(false);
@@ -17,6 +19,11 @@ export default function BmiAnalysisView() {
   const [timeseries, setTimeseries] = useState<BmiTimeSeriesRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState<boolean>(true);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  // v1.57：分析报告可逆折叠（默认展开；收起仅隐藏报告区块，分析数据保留可反复切换）
+  const [reportCollapsed, setReportCollapsed] = useState(false);
+  // v1.57：同日重复打卡 409 冲突信息与待覆盖重发的原 payload
+  const [conflictInfo, setConflictInfo] = useState<SameDayConflictPayload | null>(null);
+  const [pendingPayload, setPendingPayload] = useState<BmiAnalysisInput | null>(null);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -40,10 +47,10 @@ export default function BmiAnalysisView() {
     loadTimeseries();
   }, [loadTimeseries]);
 
-  const handleAnalyze = async (data: BmiAnalysisInput) => {
+  const handleAnalyze = async (data: BmiAnalysisInput, overwrite = false) => {
     setLoading(true);
     try {
-      const res = await healthApi.analyzeBmi(data);
+      const res = await healthApi.analyzeBmi(overwrite ? { ...data, overwrite: true } : data);
       setResult(res);
       // 分析打卡已自动持久化，优先直接采用响应内带回的最新时序，失败再回源拉取
       if (res?.timeseries) {
@@ -51,8 +58,12 @@ export default function BmiAnalysisView() {
       } else {
         loadTimeseries();
       }
-      // v1.55：透出孕周引擎自动校准与基线初始化提示
-      const hints: string[] = ["分析完成！已为您生成专属医学达标报告与个性化方案"];
+      // v1.55：透出孕周引擎自动校准与基线初始化提示；v1.57：区分首次归档与覆盖当日记录
+      const hints: string[] = [
+        res?.record_action === "updated"
+          ? "已覆盖更新当日打卡记录，评估报告已重新生成"
+          : "分析完成！已为您生成专属医学达标报告与个性化方案",
+      ];
       if (res?.baseline_initialized) {
         hints.push("首次打卡已自动以当前体重初始化孕前基线");
       }
@@ -60,9 +71,18 @@ export default function BmiAnalysisView() {
         hints.push(res.gestation_check.hint);
       }
       showToast(hints.join("；"));
+      // 覆盖/新增都切回展开态，方便用户查看最新报告
+      setReportCollapsed(false);
     } catch (err: any) {
-      const data = err?.response?.data;
-      showToast(data?.message || err?.message || "分析请求失败，请稍后重试");
+      // v1.57：同日重复打卡 409 → 弹出覆盖确认弹窗（保留原 payload，确认后携 overwrite 重发）
+      const conflict = err?.data as SameDayConflictPayload | undefined;
+      if (conflict?.conflict && conflict?.overwrite_supported) {
+        setConflictInfo(conflict);
+        setPendingPayload(data);
+      } else {
+        const data = err?.response?.data;
+        showToast(data?.message || err?.message || "分析请求失败，请稍后重试");
+      }
     } finally {
       setLoading(false);
     }
@@ -79,6 +99,18 @@ export default function BmiAnalysisView() {
       showToast(err.message || "删除失败，请稍后重试");
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  /** v1.57：批量删除历史打卡记录（后端单事务批量接口），删除后联动刷新看板与状态卡 */
+  const handleBatchDeleteRecords = async (ids: number[]) => {
+    try {
+      const res = await healthApi.batchDelete(ids);
+      showToast(`已批量删除 ${res?.deleted ?? ids.length} 条打卡记录，看板已联动刷新`);
+    } catch (err: any) {
+      showToast(err?.message || "批量删除失败，请稍后重试");
+    } finally {
+      await loadTimeseries();
     }
   };
 
@@ -129,12 +161,16 @@ export default function BmiAnalysisView() {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* v1.57：导出 A4 评估报告（打印 / PDF 下载，动态分包不影响首屏） */}
+            <HealthReportExport records={timeseries} result={result} />
             {result && (
               <button
-                onClick={() => setResult(null)}
+                onClick={() => setReportCollapsed((c) => !c)}
                 className="btn-secondary gap-1.5 text-xs shadow-2xs"
+                title={reportCollapsed ? "展开下方分析报告区块（医学预警/指标概览/曲线/食谱）" : "收起下方分析报告区块，数据不丢失可随时展开"}
               >
-                <RefreshCw className="h-3.5 w-3.5" /> 收起本次分析结果
+                {reportCollapsed ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
+                {reportCollapsed ? "展开分析报告" : "收起分析报告"}
               </button>
             )}
           </div>
@@ -203,11 +239,12 @@ export default function BmiAnalysisView() {
         records={timeseries}
         loading={historyLoading}
         onDelete={handleDeleteRecord}
+        onBatchDelete={handleBatchDeleteRecords}
         deletingId={deletingId}
       />
 
-      {/* 卡片 4: 医学预警与 AI 双通道食谱方案 */}
-      {result && evalData && (
+      {/* 卡片 4: 医学预警与 AI 双通道食谱方案（v1.57 可逆折叠：收起仅隐藏区块，result 数据保留） */}
+      {result && evalData && !reportCollapsed && (
         <div className="space-y-6">
           {/* 4.1 医学异常预警 Banner */}
           <MedicalAlertBanner alerts={result.alerts || []} />
@@ -306,6 +343,16 @@ export default function BmiAnalysisView() {
         </div>
       )}
 
+      {/* v1.57 折叠态提示条：报告已保留，可随时展开 */}
+      {result && evalData && reportCollapsed && (
+        <div className="card flex items-center justify-between gap-3 p-4 text-xs text-gray-400">
+          <span>本次分析报告已折叠（医学预警 · 指标概览 · WS/T 曲线 · 食谱方案 · 运动心理关怀），数据保留至下次分析。</span>
+          <button type="button" onClick={() => setReportCollapsed(false)} className="btn-secondary shrink-0 gap-1 text-xs">
+            <ChevronDown className="h-3.5 w-3.5" /> 展开分析报告
+          </button>
+        </div>
+      )}
+
       {/* 管理员 SearXNG 配置已移至「AI 助手配置」页（v1.56） */}
 
       {/* Toast 提示 */}
@@ -314,6 +361,27 @@ export default function BmiAnalysisView() {
           {toast}
         </div>
       )}
+
+      {/* v1.57：同日重复打卡覆盖确认弹窗（深度表单链路） */}
+      <ConfirmDialog
+        isOpen={conflictInfo !== null && pendingPayload !== null}
+        title={`${conflictInfo?.existing_date ?? "当日"} 已有妈妈打卡记录`}
+        message={`当日已有记录：体重 ${conflictInfo?.existing_weight ?? "—"} kg、身高 ${
+          conflictInfo?.existing_height ?? "—"
+        } cm。是否用本次测量数据覆盖更新当日记录？（覆盖保留原记录归档时间，不产生重复数据）`}
+        confirmText="覆盖当日记录"
+        cancelText="取消本次分析"
+        danger={false}
+        loading={loading}
+        onConfirm={() => {
+          if (pendingPayload) handleAnalyze(pendingPayload, true);
+          setConflictInfo(null);
+        }}
+        onCancel={() => {
+          setConflictInfo(null);
+          setPendingPayload(null);
+        }}
+      />
     </div>
   );
 }

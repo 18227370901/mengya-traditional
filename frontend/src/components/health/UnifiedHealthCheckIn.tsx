@@ -11,10 +11,12 @@ import {
   CheckCircle2,
   X,
   Info,
+  AlertTriangle,
 } from "lucide-react";
 import { useAuthStore } from "@/store/authStore";
 import { healthApi } from "@/api/services";
 import type { BmiAnalysisInput, HealthRecord } from "@/types";
+import type { SameDayConflictPayload } from "@/types/health";
 
 /**
  * 统一健康打卡弹窗（v1.55 健康中心唯一录入入口）
@@ -68,6 +70,14 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved, initial
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  // v1.57：同日重复打卡 409 冲突（含待覆盖重发的原始 payload 引用）
+  const [conflict, setConflict] = useState<null | {
+    mode: "mom" | "baby";
+    info: SameDayConflictPayload;
+    momPayload?: BmiAnalysisInput;
+    babyPayload?: Partial<HealthRecord>;
+  }>(null);
+  const todayStr = new Date().toISOString().slice(0, 10);
 
   // 档案智能默认：孕期用户默认孕期打卡；已出生宝宝档案默认宝宝测量；其余（备孕/日常）默认非孕期
   useEffect(() => {
@@ -108,6 +118,25 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved, initial
     const months = Math.floor(babyDays / 30.44);
     return `${months} 个月（${babyDays} 天）`;
   }, [babyDays]);
+
+  // v1.57 宝宝数值软提示（仅黄色警示不阻断提交，用户明确要求不限制录入）
+  const babyRangeHints = useMemo(() => {
+    if (mode !== "baby") return [];
+    const hints: string[] = [];
+    const h = parseFloat(babyHeight);
+    const w = parseFloat(babyWeight);
+    const head = parseFloat(babyHead);
+    if (babyHeight && !Number.isNaN(h) && (h < 30 || h > 140)) {
+      hints.push(`身高 ${h}cm 超出常见宝宝身高范围 (30~140cm)，请确认录入无误`);
+    }
+    if (babyWeight && !Number.isNaN(w) && (w < 0.5 || w > 40)) {
+      hints.push(`体重 ${w}kg 超出常见宝宝体重范围 (0.5~40kg)，请确认录入无误`);
+    }
+    if (babyHead && !Number.isNaN(head) && (head < 25 || head > 60)) {
+      hints.push(`头围 ${head}cm 超出常见宝宝头围范围 (25~60cm)，请确认录入无误`);
+    }
+    return hints;
+  }, [mode, babyHeight, babyWeight, babyHead]);
 
   if (!isOpen) return null;
 
@@ -154,6 +183,10 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved, initial
     const w = Number(weight);
 
     // ===== 前端轻量校验 =====
+    if (recordDate > todayStr) {
+      setErrorMsg("测量日期不能晚于今天，请重新选择");
+      return;
+    }
     if (!isBabyMode) {
       if (!weight || Number.isNaN(w) || w <= 0) {
         setErrorMsg("请填写本次实测体重 (kg)");
@@ -212,9 +245,68 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved, initial
       }
       onClose();
     } catch (err: any) {
-      // 透传后端孕周校验拦截等业务错误信息
+      // v1.57：同日重复 409 → 弹出覆盖确认内联确认条（保留本次录入数据，确认后覆盖重发）
+      const conflictData = err?.data as SameDayConflictPayload | undefined;
+      if (conflictData?.conflict && conflictData?.overwrite_supported) {
+        if (isBabyMode) {
+          setConflict({
+            mode: "baby",
+            info: conflictData,
+            babyPayload: {
+              record_type: "growth_measurement",
+              record_date: recordDate,
+              baby_age_days: babyDays ?? undefined,
+              height: babyHeight ? Number(babyHeight) : undefined,
+              weight: babyWeight ? Number(babyWeight) : undefined,
+              head_circumference: babyHead ? Number(babyHead) : undefined,
+              note: note || undefined,
+            },
+          });
+        } else {
+          const payload: BmiAnalysisInput = {
+            stage_type: isPostpartumMode ? "postpartum" : isGeneralMode ? "general" : "pregnancy",
+            record_date: recordDate,
+            current_weight_kg: w,
+            waist_circumference_cm: waist ? Number(waist) : undefined,
+            medical_history: [],
+            is_twins: false,
+          };
+          if (momMode) {
+            payload.gestational_week = hasDueDate ? (autoWeek ?? undefined) : Number(manualWeek);
+          } else if (isPostpartumMode) {
+            payload.postpartum_months = babyDays != null ? Math.max(0, Math.floor(babyDays / 30.44)) : 1;
+          }
+          setConflict({ mode: "mom", info: conflictData, momPayload: payload });
+        }
+      } else {
+        // 透传后端孕周校验拦截等业务错误信息
+        const data = err?.response?.data;
+        setErrorMsg(data?.message || err?.message || "保存失败，请稍后重试");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /** v1.57：确认覆盖当日已有记录——妈妈链路携 overwrite 重发分析接口，宝宝链路调 update 原地更新 */
+  const handleOverwrite = async () => {
+    if (!conflict) return;
+    setSaving(true);
+    setErrorMsg("");
+    try {
+      if (conflict.mode === "mom" && conflict.momPayload) {
+        await healthApi.analyzeBmi({ ...conflict.momPayload, overwrite: true });
+        onSaved("已覆盖当日打卡记录，孕产档案与 BMI 时序已同步更新");
+      } else if (conflict.mode === "baby" && conflict.babyPayload) {
+        await healthApi.update(conflict.info.existing_id, conflict.babyPayload);
+        onSaved("已覆盖当日宝宝测量记录，生长曲线已同步更新");
+      }
+      setConflict(null);
+      onClose();
+    } catch (err: any) {
+      setConflict(null);
       const data = err?.response?.data;
-      setErrorMsg(data?.message || err?.message || "保存失败，请稍后重试");
+      setErrorMsg(data?.message || err?.message || "覆盖更新失败，请稍后重试");
     } finally {
       setSaving(false);
     }
@@ -252,10 +344,45 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved, initial
             </div>
           )}
 
-          {/* 分区 1：记录对象（按档案智能默认，可自由切换覆盖补录场景） */}
+          {/* v1.57：同日重复打卡覆盖确认（内联确认条：展示当日已有数据 + 覆盖/取消） */}
+          {conflict && (
+            <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  {conflict.info.existing_date} 当日已有
+                  {conflict.mode === "mom"
+                    ? `妈妈打卡记录（体重 ${conflict.info.existing_weight ?? "—"} kg）`
+                    : `宝宝测量记录（身高 ${conflict.info.existing_height ?? "—"} cm / 体重 ${conflict.info.existing_weight ?? "—"} kg）`}
+                  。是否用本次测量数据覆盖更新当日记录？
+                </span>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConflict(null)}
+                  className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs text-gray-500 transition hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400"
+                  disabled={saving}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={handleOverwrite}
+                  disabled={saving}
+                  className="inline-flex items-center gap-1 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-amber-600 disabled:opacity-60"
+                >
+                  {saving && <Loader2 className="h-3 w-3 animate-spin" />}
+                  覆盖当日记录
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 分区 1：记录对象（按档案智能默认，可自由切换覆盖补录场景；v1.57 四模式四列布局） */}
           <div>
             <label className="label">① 我要记录</label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {MODE_OPTIONS.map((opt) => (
                 <button
                   key={opt.key}
@@ -298,6 +425,7 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved, initial
               type="date"
               className="input"
               value={recordDate}
+              max={todayStr}
               onChange={(e) => setRecordDate(e.target.value)}
               required
             />
@@ -379,46 +507,59 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved, initial
                 </p>
               </div>
             ) : (
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="text-xs text-gray-500 dark:text-gray-400">身高 (cm)</label>
-                  <div className="relative">
-                    <Ruler className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+              <div className="space-y-2">
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-xs text-gray-500 dark:text-gray-400">身高 (cm)</label>
+                    <div className="relative">
+                      <Ruler className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+                      <input
+                        type="number"
+                        step="0.1"
+                        className="input pl-9"
+                        placeholder="身高"
+                        value={babyHeight}
+                        onChange={(e) => setBabyHeight(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 dark:text-gray-400">体重 (kg)</label>
+                    <div className="relative">
+                      <Scale className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+                      <input
+                        type="number"
+                        step="0.1"
+                        className="input pl-9"
+                        placeholder="体重"
+                        value={babyWeight}
+                        onChange={(e) => setBabyWeight(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 dark:text-gray-400">头围 (cm)</label>
                     <input
                       type="number"
                       step="0.1"
-                      className="input pl-9"
-                      placeholder="身高"
-                      value={babyHeight}
-                      onChange={(e) => setBabyHeight(e.target.value)}
+                      className="input"
+                      placeholder="头围"
+                      value={babyHead}
+                      onChange={(e) => setBabyHead(e.target.value)}
                     />
                   </div>
                 </div>
-                <div>
-                  <label className="text-xs text-gray-500 dark:text-gray-400">体重 (kg)</label>
-                  <div className="relative">
-                    <Scale className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                    <input
-                      type="number"
-                      step="0.1"
-                      className="input pl-9"
-                      placeholder="体重"
-                      value={babyWeight}
-                      onChange={(e) => setBabyWeight(e.target.value)}
-                    />
+                {/* v1.57 宝宝数值软提示：仅警示不限制录入（用户可录入特殊医学场景数据） */}
+                {babyRangeHints.length > 0 && (
+                  <div className="flex items-start gap-2 rounded-xl bg-amber-50 p-2.5 text-[11px] leading-relaxed text-amber-700 dark:bg-amber-950/30 dark:text-amber-400">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <div className="space-y-0.5">
+                      {babyRangeHints.map((h) => (
+                        <p key={h}>{h}</p>
+                      ))}
+                    </div>
                   </div>
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500 dark:text-gray-400">头围 (cm)</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    className="input"
-                    placeholder="头围"
-                    value={babyHead}
-                    onChange={(e) => setBabyHead(e.target.value)}
-                  />
-                </div>
+                )}
               </div>
             )}
           </div>

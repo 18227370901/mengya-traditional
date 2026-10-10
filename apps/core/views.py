@@ -1989,6 +1989,65 @@ class HealthRecordViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return HealthRecord.objects.filter(user=self.request.user)
 
+    # ===== v1.57 数据合理性校验：测量类记录同日唯一（妈妈 prenatal_exam / 宝宝 growth_measurement；疫苗同日可多剂不查重）=====
+    UNIQUE_DATE_TYPES = ("prenatal_exam", "growth_measurement")
+
+    def _find_same_day_record(self, user, record_type, record_date):
+        """查找同日同类型已有记录（历史脏数据同日多条时取创建时间最新的一条）"""
+        if record_type not in self.UNIQUE_DATE_TYPES or not record_date:
+            return None
+        return (
+            HealthRecord.objects.filter(user=user, record_type=record_type, record_date=record_date)
+            .order_by("-created_at")
+            .first()
+        )
+
+    @staticmethod
+    def _conflict_payload(existing):
+        """409 冲突响应：透出当日已有记录摘要，供前端展示与覆盖决策"""
+        items = existing.exam_items if isinstance(existing.exam_items, dict) else {}
+        stage = items.get("stage") or ("pregnancy" if existing.gestational_week else "pregnancy")
+        return {
+            "conflict": True,
+            "conflict_code": 4090,
+            "existing_id": existing.id,
+            "existing_date": str(existing.record_date),
+            "existing_stage": stage,
+            "existing_weight": existing.weight,
+            "existing_height": existing.height,
+            "overwrite_supported": True,
+        }
+
+    def create(self, request, *args, **kwargs):
+        """新增记录入口：先做同日唯一性校验——命中且未显式确认覆盖时返回 409，
+        前端弹窗展示当日已有数据，用户确认覆盖后携 overwrite=true 重发，走更新逻辑。"""
+        record_type = request.data.get("record_type")
+        record_date = request.data.get("record_date")
+        if record_type and record_date:
+            existing = self._find_same_day_record(request.user, record_type, record_date)
+            if existing:
+                if not bool(request.data.get("overwrite", False)):
+                    return Response(
+                        {
+                            "code": 4090,
+                            "message": f"{record_date} 当日已有该类型记录，确认覆盖后可更新当日数据",
+                            "data": self._conflict_payload(existing),
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                # 用户已确认覆盖：原地更新当日记录（保留记录 id 与创建时间）
+                serializer = self.get_serializer(existing, data=request.data, partial=True)
+                serializer.is_valid(raise_exception=True)
+                self.perform_update(serializer)
+                return Response(
+                    {
+                        "code": 0,
+                        "message": "已覆盖更新当日记录",
+                        "data": serializer.data,
+                    }
+                )
+        return super().create(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         check_permission_or_403(self.request.user, "health_record_create", "您没有添加健康记录的权限")
         rec = serializer.save(user=self.request.user)
@@ -2003,6 +2062,264 @@ class HealthRecordViewSet(viewsets.ModelViewSet):
         check_permission_or_403(self.request.user, "health_record_delete", "您没有删除健康记录的权限")
         audit(self.request, "health_record_delete", "删除健康记录", "health", instance.id, instance.record_type, f"删除记录 #{instance.id}")
         instance.delete()
+
+    # ===== v1.57 批量删除（单事务 + 逐条审计 + 权限校验，仅删除本人记录） =====
+    @action(detail=False, methods=["post"], url_path="batch-delete")
+    def batch_delete(self, request):
+        check_permission_or_403(request.user, "health_record_delete", "您没有删除健康记录的权限")
+        ids = request.data.get("ids") or []
+        if not isinstance(ids, list) or not ids:
+            return Response(
+                {"code": 4001, "message": "ids 必须为非空数组", "data": None},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # 清洗为正整数并去重，单次上限 200 条防御误操作
+        clean_ids = []
+        for i in ids:
+            try:
+                v = int(i)
+                if v > 0 and v not in clean_ids:
+                    clean_ids.append(v)
+            except (TypeError, ValueError):
+                continue
+        if not clean_ids:
+            return Response(
+                {"code": 4001, "message": "ids 中没有有效记录编号", "data": None},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(clean_ids) > 200:
+            return Response(
+                {"code": 4002, "message": "单次最多删除 200 条记录，请分批操作", "data": None},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        from django.db import transaction
+
+        deleted_count = 0
+        skipped = []
+        with transaction.atomic():
+            targets = HealthRecord.objects.filter(user=request.user, id__in=clean_ids)
+            for rec in targets:
+                audit(request, "health_record_delete", "批量删除健康记录", "health", rec.id, rec.record_type, f"批量删除记录 #{rec.id}")
+                rec.delete()
+                deleted_count += 1
+            skipped = [i for i in clean_ids if not HealthRecord.objects.filter(id=i).exists()]
+        return Response(
+            {
+                "code": 0,
+                "message": f"已删除 {deleted_count} 条记录",
+                "data": {"deleted": deleted_count, "skipped": skipped},
+            }
+        )
+
+    # ===== v1.57 CSV 健康数据批量导入（妈妈体重打卡 / 宝宝生长测量，冲突策略 skip|overwrite） =====
+    @action(detail=False, methods=["post"], url_path="batch-import")
+    def batch_import(self, request):
+        check_permission_or_403(request.user, "health_record_create", "您没有添加健康记录的权限")
+        from django.utils import timezone
+
+        records = request.data.get("records") or []
+        target = request.data.get("target", "mom")  # mom | baby
+        strategy = request.data.get("conflict_strategy", "skip")  # skip | overwrite
+        if target not in ("mom", "baby"):
+            return Response(
+                {"code": 4001, "message": "target 仅支持 mom（妈妈体重打卡）或 baby（宝宝生长测量）", "data": None},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if strategy not in ("skip", "overwrite"):
+            return Response(
+                {"code": 4002, "message": "conflict_strategy 仅支持 skip（跳过冲突）或 overwrite（覆盖当日已有记录）", "data": None},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not isinstance(records, list) or not records:
+            return Response(
+                {"code": 4003, "message": "records 必须为非空数组（由前端解析 CSV 后逐行传入）", "data": None},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(records) > 500:
+            return Response(
+                {"code": 4004, "message": "单次最多导入 500 条记录，请分批导入", "data": None},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        today = timezone.localdate()
+        user = request.user
+        # 宽松防呆边界（仅拒绝明显脏数据，不限制正常特殊值）
+        MOM_RANGE = {"weight": (25.0, 250.0), "height": (80.0, 250.0), "waist": (30.0, 220.0)}
+        BABY_RANGE = {"height": (20.0, 200.0), "weight": (0.2, 60.0), "head": (20.0, 80.0)}
+
+        created, updated, skipped, errors = 0, 0, 0, []
+        # 妈妈：身高与孕前体重从最近一条打卡记录继承（批量导入免填，减少列数）
+        last_mom = (
+            HealthRecord.objects.filter(user=user, record_type="prenatal_exam")
+            .order_by("-record_date", "-created_at")
+            .first()
+        )
+        inherit_height = last_mom.height if last_mom else None
+        inherit_pre_weight = (
+            last_mom.exam_items.get("pre_weight")
+            if last_mom and isinstance(last_mom.exam_items, dict)
+            else None
+        )
+
+        for idx, row in enumerate(records, start=1):
+            def _fail(reason):
+                errors.append({"row": idx, "date": row.get("date", ""), "reason": reason})
+
+            raw_date = str(row.get("date") or "").strip()
+            try:
+                from datetime import datetime as _dt
+
+                rec_date = _dt.strptime(raw_date, "%Y-%m-%d").date()
+            except ValueError:
+                _fail("日期格式错误（应为 YYYY-MM-DD）")
+                continue
+            if rec_date > today:
+                _fail("日期不能晚于今天")
+                continue
+
+            def _to_float(val):
+                if val is None or str(val).strip() == "":
+                    return None
+                try:
+                    return round(float(str(val).strip()), 2)
+                except (TypeError, ValueError):
+                    return None
+
+            existing = self._find_same_day_record(user, "prenatal_exam" if target == "mom" else "growth_measurement", rec_date)
+            if existing and strategy == "skip":
+                skipped += 1
+                continue
+
+            try:
+                if target == "mom":
+                    weight = _to_float(row.get("weight"))
+                    if weight is None or not (MOM_RANGE["weight"][0] <= weight <= MOM_RANGE["weight"][1]):
+                        _fail(f"体重数值无效（合理防呆范围 {MOM_RANGE['weight'][0]}~{MOM_RANGE['weight'][1]} kg）")
+                        continue
+                    height = _to_float(row.get("height")) or inherit_height
+                    waist = _to_float(row.get("waist"))
+                    if waist is not None and not (MOM_RANGE["waist"][0] <= waist <= MOM_RANGE["waist"][1]):
+                        _fail("腹围数值超出防呆范围")
+                        continue
+                    if height is not None and not (MOM_RANGE["height"][0] <= height <= MOM_RANGE["height"][1]):
+                        height = inherit_height
+                    stage_raw = str(row.get("stage") or "").strip().lower()
+                    stage_map = {"pregnancy": "pregnancy", "postpartum": "postpartum", "general": "general", "": None}
+                    stage = stage_map.get(stage_raw)
+                    if stage is None:
+                        # 未显式指定阶段：按档案智能回推（孕期中→pregnancy；宝宝已出生→postpartum；其余→general）
+                        if getattr(user, "is_pregnant", None) is True:
+                            stage = "pregnancy"
+                        elif getattr(user, "due_date", None) and not getattr(user, "baby_birthday", None):
+                            stage = "pregnancy"
+                        elif getattr(user, "baby_birthday", None):
+                            stage = "postpartum"
+                        else:
+                            stage = "general"
+                    gestational_week = None
+                    if stage == "pregnancy":
+                        wk = _to_float(row.get("week"))
+                        gestational_week = int(wk) if wk else None
+                        if gestational_week is None:
+                            _fail("孕期记录必须提供 week（孕周）列，或改用 postpartum/general 阶段导入")
+                            continue
+                    bmi_val = None
+                    if height and weight:
+                        bmi_val = round(weight / ((height / 100.0) ** 2), 2)
+                    exam_items = {
+                        "stage": stage,
+                        "waist_circumference": waist,
+                        "pre_weight": inherit_pre_weight,
+                        "bmi": bmi_val,
+                    }
+                    if existing:
+                        existing.gestational_week = gestational_week
+                        existing.height = height or existing.height
+                        existing.weight = weight
+                        existing.exam_items = exam_items
+                        existing.note = row.get("note") or existing.note
+                        existing.save(update_fields=["gestational_week", "height", "weight", "exam_items", "note", "updated_at"])
+                        updated += 1
+                        audit(request, "health_record_import", "批量导入覆盖健康记录", "health", existing.id, "prenatal_exam", f"CSV 导入覆盖 {rec_date}")
+                    else:
+                        new_rec = HealthRecord.objects.create(
+                            user=user,
+                            record_type="prenatal_exam",
+                            record_date=rec_date,
+                            gestational_week=gestational_week,
+                            height=height,
+                            weight=weight,
+                            exam_items=exam_items,
+                            note=row.get("note") or f"CSV 批量导入（{stage}）",
+                        )
+                        created += 1
+                        audit(request, "health_record_import", "批量导入健康记录", "health", new_rec.id, "prenatal_exam", f"CSV 导入 {rec_date}")
+                else:
+                    height = _to_float(row.get("height"))
+                    weight = _to_float(row.get("weight"))
+                    head = _to_float(row.get("head"))
+                    if height is None and weight is None and head is None:
+                        _fail("身高/体重/头围至少需要一项")
+                        continue
+                    # 逐项防呆校验（超出任一范围即整行报错跳过，不阻断后续行）
+                    range_error = None
+                    for label, val, rng in (
+                        ("身高", height, BABY_RANGE["height"]),
+                        ("体重", weight, BABY_RANGE["weight"]),
+                        ("头围", head, BABY_RANGE["head"]),
+                    ):
+                        if val is not None and not (rng[0] <= val <= rng[1]):
+                            range_error = f"{label}数值超出防呆范围 {rng[0]}~{rng[1]}"
+                            break
+                    if range_error:
+                        _fail(range_error)
+                        continue
+                    baby_age_days = None
+                    baby_birthday = getattr(user, "baby_birthday", None)
+                    if baby_birthday:
+                        baby_age_days = (rec_date - baby_birthday).days
+                    if existing:
+                        existing.height = height or existing.height
+                        existing.weight = weight or existing.weight
+                        existing.head_circumference = head or existing.head_circumference
+                        existing.baby_age_days = baby_age_days or existing.baby_age_days
+                        existing.note = row.get("note") or existing.note
+                        existing.save(update_fields=["height", "weight", "head_circumference", "baby_age_days", "note", "updated_at"])
+                        updated += 1
+                        audit(request, "health_record_import", "批量导入覆盖健康记录", "health", existing.id, "growth_measurement", f"CSV 导入覆盖 {rec_date}")
+                    else:
+                        new_rec = HealthRecord.objects.create(
+                            user=user,
+                            record_type="growth_measurement",
+                            record_date=rec_date,
+                            height=height,
+                            weight=weight,
+                            head_circumference=head,
+                            baby_age_days=baby_age_days,
+                            note=row.get("note") or "CSV 批量导入（宝宝生长测量）",
+                        )
+                        created += 1
+                        audit(request, "health_record_import", "批量导入健康记录", "health", new_rec.id, "growth_measurement", f"CSV 导入 {rec_date}")
+            except Exception as exc:  # 单行异常不阻断整体导入
+                _fail(f"写入失败：{exc}")
+                continue
+
+        audit(
+            request,
+            "health_record_import",
+            "健康数据 CSV 批量导入",
+            "health",
+            0,
+            target,
+            f"导入完成：新增 {created}，覆盖 {updated}，跳过 {skipped}，失败 {len(errors)}",
+        )
+        return Response(
+            {
+                "code": 0,
+                "message": f"导入完成：新增 {created} 条，覆盖 {updated} 条，跳过 {skipped} 条，失败 {len(errors)} 条",
+                "data": {"created": created, "updated": updated, "skipped": skipped, "errors": errors[:50]},
+            }
+        )
 
 
 def _build_bmi_timeseries(user):
@@ -2055,6 +2372,8 @@ class HealthBmiAnalysisView(APIView):
 
     def get(self, request):
         check_permission_or_403(request.user, "menu_health", "您没有访问健康中心的权限")
+        # v1.57 权限补齐：时序拉取属于健康档案查看能力，需同时具备查看权限（原仅校验菜单级权限存在越权漏洞）
+        check_permission_or_403(request.user, "health_record_view", "您没有查看健康档案的权限")
         return Response({
             "code": 0,
             "message": "获取成功",
@@ -2065,6 +2384,8 @@ class HealthBmiAnalysisView(APIView):
 
     def post(self, request):
         check_permission_or_403(request.user, "menu_health", "您没有访问健康中心的权限")
+        # v1.57 权限补齐：分析接口会自动归档写库，必须具备新增健康记录权限（原仅校验菜单级权限存在越权漏洞）
+        check_permission_or_403(request.user, "health_record_create", "您没有添加健康记录的权限")
         from apps.core.serializers.health import BmiAnalysisInputSerializer
         from apps.core.services.medical_calculator import MedicalCalculator
         from apps.core.services.diet_recommendation_service import DietRecommendationService
@@ -2107,6 +2428,36 @@ class HealthBmiAnalysisView(APIView):
 
         # ===== 孕周一致性校验引擎（孕期阶段专属；偏差 > 1 周直接拦截）=====
         target_date = data.get("record_date") or timezone.now().date()
+        # ===== v1.57 同日唯一性校验：当日已有妈妈打卡时返回 409，前端弹窗确认后携 overwrite=true 覆盖更新 =====
+        overwrite = bool(data.get("overwrite", False))
+        existing_same_day = (
+            HealthRecord.objects.filter(
+                user=request.user, record_type="prenatal_exam", record_date=target_date
+            )
+            .order_by("-created_at")
+            .first()
+        )
+        if existing_same_day and not overwrite:
+            existing_items = existing_same_day.exam_items if isinstance(existing_same_day.exam_items, dict) else {}
+            # 与批次导出/记录接口保持一致：历史无 stage 的 prenatal_exam 按孕期回推
+            existing_stage = existing_items.get("stage") or "pregnancy"
+            return Response(
+                {
+                    "code": 4090,
+                    "message": f"{target_date} 当日已有妈妈打卡记录，确认覆盖后将以本次数据更新当日记录",
+                    "data": {
+                        "conflict": True,
+                        "conflict_code": 4090,
+                        "existing_id": existing_same_day.id,
+                        "existing_date": str(existing_same_day.record_date),
+                        "existing_stage": existing_stage,
+                        "existing_weight": existing_same_day.weight,
+                        "existing_height": existing_same_day.height,
+                        "overwrite_supported": True,
+                    },
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         gestational_week = data.get("gestational_week")
         gestation_check = {"week": None, "basis": "", "auto_filled": False, "hint": ""}
         if stage_type == "pregnancy":
@@ -2178,22 +2529,38 @@ class HealthBmiAnalysisView(APIView):
             "is_twins": bool(data.get("is_twins", False)),
             "postpartum_months": data.get("postpartum_months"),
         }
+        note_text = (
+            f"{'非孕期' if stage_mark == 'general' else '产后' if stage_mark == 'postpartum' else f'孕{gestational_week}周'}打卡："
+            f"孕前BMI {evaluation['bmi']} ({evaluation['category_label']}), "
+            f"累计增重 {evaluation['actual_gain']}kg ({evaluation.get('gain_status_label', '')})"
+        )
+        created_record_id = None
+        # v1.57 record_action：created 首次归档 / updated 覆盖当日已有记录（保留记录 id 与创建时间）
+        record_action = "created"
         try:
-            new_rec = HealthRecord.objects.create(
-                user=request.user,
-                record_type=rec_type,
-                record_date=target_date,
-                gestational_week=gestational_week,
-                height=height_cm,
-                weight=current_weight,
-                exam_items=exam_items,
-                note=(
-                    f"{'非孕期' if stage_mark == 'general' else '产后' if stage_mark == 'postpartum' else f'孕{gestational_week}周'}打卡："
-                    f"孕前BMI {evaluation['bmi']} ({evaluation['category_label']}), "
-                    f"累计增重 {evaluation['actual_gain']}kg ({evaluation.get('gain_status_label', '')})"
-                ),
-            )
-            created_record_id = new_rec.id
+            if existing_same_day:
+                existing_same_day.gestational_week = gestational_week
+                existing_same_day.height = height_cm
+                existing_same_day.weight = current_weight
+                existing_same_day.exam_items = exam_items
+                existing_same_day.note = note_text
+                existing_same_day.save(
+                    update_fields=["gestational_week", "height", "weight", "exam_items", "note", "updated_at"]
+                )
+                created_record_id = existing_same_day.id
+                record_action = "updated"
+            else:
+                new_rec = HealthRecord.objects.create(
+                    user=request.user,
+                    record_type=rec_type,
+                    record_date=target_date,
+                    gestational_week=gestational_week,
+                    height=height_cm,
+                    weight=current_weight,
+                    exam_items=exam_items,
+                    note=note_text,
+                )
+                created_record_id = new_rec.id
         except Exception:
             pass
 
@@ -2202,7 +2569,7 @@ class HealthBmiAnalysisView(APIView):
         audit(
             request,
             "health_bmi_analyze",
-            "孕产妇BMI与方案分析",
+            "孕产妇BMI与方案分析（覆盖当日记录）" if record_action == "updated" else "孕产妇BMI与方案分析",
             "health",
             created_record_id or 0,
             evaluation.get("category", ""),
@@ -2211,7 +2578,7 @@ class HealthBmiAnalysisView(APIView):
 
         return Response({
             "code": 0,
-            "message": "分析成功",
+            "message": "已覆盖更新当日打卡并重新生成评估" if record_action == "updated" else "分析成功",
             "data": {
                 "evaluation": evaluation,
                 "alerts": evaluation.get("alerts", []),
@@ -2219,6 +2586,7 @@ class HealthBmiAnalysisView(APIView):
                 "lifestyle_advice": lifestyle_care,
                 "disclaimer": disclaimer,
                 "created_record_id": created_record_id,
+                "record_action": record_action,
                 "timeseries": timeseries_history,
                 "gestation_check": gestation_check,
                 "baseline_initialized": baseline_initialized,

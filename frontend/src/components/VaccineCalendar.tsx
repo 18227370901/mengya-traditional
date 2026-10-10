@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, ChevronLeft, ChevronRight, Edit3, Plus, Trash2, X } from "lucide-react";
 import { healthApi } from "@/api/services";
+import { useAuthStore } from "@/store/authStore";
 import type { HealthRecord } from "@/types";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import PaginationBar, { useListPagination } from "@/components/ui/PaginationBar";
 
 const MONTHS = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
 
@@ -37,9 +40,11 @@ interface VaccineCalendarProps {
   babyBirthday?: string;
 }
 
-/** 疫苗日历：按月展示已接种/待接种，支持编辑、删除、年份切换 */
+/** 疫苗日历：按月展示已接种/待接种，支持编辑、删除、年份切换；v1.57 接种记录支持勾选批量删除与分页 */
 export default function VaccineCalendar({ records, onChanged, babyBirthday }: VaccineCalendarProps) {
   const now = new Date();
+  const { hasPermission } = useAuthStore();
+  const canDelete = hasPermission("health_record_delete");
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
   const [showAdd, setShowAdd] = useState(false);
@@ -50,6 +55,12 @@ export default function VaccineCalendar({ records, onChanged, babyBirthday }: Va
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+  // v1.57：单删确认 / 批删确认 / 勾选集合
+  const [confirmId, setConfirmId] = useState<number | null>(null);
+  const [confirmName, setConfirmName] = useState("");
+  const [batchConfirm, setBatchConfirm] = useState(false);
+  const [batchDeleting, setBatchDeleting] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(""), 2500); };
 
@@ -64,6 +75,48 @@ export default function VaccineCalendar({ records, onChanged, babyBirthday }: Va
 
   // 所有疫苗记录
   const vaccineRecords = records.filter((r) => r.record_type === "vaccination" && r.vaccine_name);
+
+  // v1.57：全部接种记录管理列表（时间倒序分页，勾选批量删除）
+  const allSort = useMemo(
+    () => (a: HealthRecord, b: HealthRecord) =>
+      a.record_date === b.record_date ? b.id - a.id : a.record_date < b.record_date ? 1 : -1,
+    []
+  );
+  const allPage = useListPagination(vaccineRecords, allSort, "mengya_page_size_vaccine_records", 5);
+
+  const toggleSelect = (id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectPage = () => {
+    const ids = allPage.pageItems.map((r) => r.id);
+    const allSelected = ids.length > 0 && ids.every((id) => selected.has(id));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => (allSelected ? next.delete(id) : next.add(id)));
+      return next;
+    });
+  };
+
+  const handleBatchDelete = async () => {
+    setBatchDeleting(true);
+    try {
+      const res = await healthApi.batchDelete([...selected]);
+      showToast(`已批量删除 ${res?.deleted ?? selected.size} 条接种记录`);
+      setSelected(new Set());
+      setBatchConfirm(false);
+      onChanged?.();
+    } catch {
+      setError("批量删除失败，请稍后重试");
+    } finally {
+      setBatchDeleting(false);
+    }
+  };
 
   // 当前年月已接种的记录
   const currentMonthRecords = vaccineRecords.filter((r) => {
@@ -159,14 +212,15 @@ export default function VaccineCalendar({ records, onChanged, babyBirthday }: Va
     }
   };
 
-  const remove = async (id: number, name: string) => {
-    if (!window.confirm(`确认删除「${name}」这条接种记录？`)) return;
+  const remove = async (id: number) => {
     try {
       await healthApi.remove(id);
       showToast("已删除接种记录");
+      setConfirmId(null);
       onChanged?.();
     } catch {
       setError("删除失败，请稍后重试");
+      setConfirmId(null);
     }
   };
 
@@ -310,15 +364,115 @@ export default function VaccineCalendar({ records, onChanged, babyBirthday }: Va
                   <button className="rounded-lg p-1.5 text-gray-400 hover:bg-white hover:text-brand-500" onClick={() => startEdit(r)}>
                     <Edit3 className="h-3.5 w-3.5" />
                   </button>
-                  <button className="rounded-lg p-1.5 text-gray-400 hover:bg-white hover:text-red-500" onClick={() => remove(r.id, r.vaccine_name || "")}>
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  {canDelete && (
+                    <button
+                      className="rounded-lg p-1.5 text-gray-400 hover:bg-white hover:text-red-500"
+                      onClick={() => {
+                        setConfirmId(r.id);
+                        setConfirmName(r.vaccine_name || "");
+                      }}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {/* v1.57 全部接种记录管理（时间倒序 · 勾选单选/多选/全选当前页 · 批量删除 · 分页） */}
+      {vaccineRecords.length > 0 && (
+        <div className="space-y-2 border-t border-gray-100 pt-4 dark:border-gray-700">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h4 className="flex items-center gap-1.5 text-sm font-medium text-gray-600">
+              全部接种记录 ({vaccineRecords.length})
+              {canDelete && (
+                <label className="ml-2 flex cursor-pointer items-center gap-1 text-[11px] text-gray-400">
+                  <input
+                    type="checkbox"
+                    checked={allPage.pageItems.length > 0 && allPage.pageItems.every((r) => selected.has(r.id))}
+                    onChange={toggleSelectPage}
+                    className="h-3.5 w-3.5 cursor-pointer rounded border-gray-300 accent-orange-500"
+                  />
+                  全选本页
+                </label>
+              )}
+            </h4>
+            {canDelete && selected.size > 0 && (
+              <button
+                type="button"
+                onClick={() => setBatchConfirm(true)}
+                className="inline-flex items-center gap-1 rounded-lg bg-red-50 px-3 py-1.5 text-[11px] font-semibold text-red-600 transition hover:bg-red-100 dark:bg-red-950/40 dark:text-red-400"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                删除所选 ({selected.size})
+              </button>
+            )}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 text-xs text-gray-400 dark:border-gray-800">
+                  {canDelete && <th className="w-8 px-3 py-2 font-medium" />}
+                  <th className="px-3 py-2 font-medium">接种日期</th>
+                  <th className="px-3 py-2 font-medium">疫苗名称</th>
+                  <th className="px-3 py-2 font-medium">备注</th>
+                  {canDelete && <th className="px-3 py-2 font-medium">操作</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {allPage.pageItems.map((r) => (
+                  <tr
+                    key={r.id}
+                    className={`border-b border-gray-50 transition hover:bg-orange-50/40 dark:border-gray-800/60 dark:hover:bg-gray-800/40 ${
+                      selected.has(r.id) ? "bg-orange-50/60 dark:bg-gray-800/60" : ""
+                    }`}
+                  >
+                    {canDelete && (
+                      <td className="px-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(r.id)}
+                          onChange={() => toggleSelect(r.id)}
+                          className="h-3.5 w-3.5 cursor-pointer rounded border-gray-300 accent-orange-500"
+                          aria-label={`选择 ${r.vaccine_name} 记录`}
+                        />
+                      </td>
+                    )}
+                    <td className="px-3 py-2 text-gray-700 dark:text-gray-200">{r.record_date}</td>
+                    <td className="px-3 py-2 font-medium text-gray-700 dark:text-gray-200">{r.vaccine_name}</td>
+                    <td className="px-3 py-2 text-xs text-gray-400">{r.note || "—"}</td>
+                    {canDelete && (
+                      <td className="px-3 py-2">
+                        <button
+                          className="text-gray-300 hover:text-red-500"
+                          onClick={() => {
+                            setConfirmId(r.id);
+                            setConfirmName(r.vaccine_name || "");
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <PaginationBar
+            page={allPage.page}
+            totalPages={allPage.totalPages}
+            total={allPage.total}
+            pageSize={allPage.pageSize}
+            onPageChange={allPage.setPage}
+            onPageSizeChange={allPage.setPageSize}
+            unitLabel="条"
+          />
+        </div>
+      )}
 
       {/* 免疫规划待接种清单 */}
       <div>
@@ -350,6 +504,29 @@ export default function VaccineCalendar({ records, onChanged, babyBirthday }: Va
           })}
         </div>
       </div>
+
+      {/* v1.57 单条删除确认 / 批量删除确认 */}
+      <ConfirmDialog
+        isOpen={confirmId !== null}
+        title={`删除「${confirmName}」接种记录？`}
+        message="删除后将无法恢复，免疫规划清单的接种状态将同步回退为待接种。"
+        confirmText="确认删除"
+        onConfirm={() => confirmId != null && remove(confirmId)}
+        onCancel={() => setConfirmId(null)}
+      />
+      <ConfirmDialog
+        isOpen={batchConfirm}
+        title={`删除所选 ${selected.size} 条接种记录？`}
+        message="所选接种记录将被批量删除且无法恢复，对应免疫规划项将回退为待接种。"
+        detail={`涉及疫苗：${vaccineRecords
+          .filter((r) => selected.has(r.id))
+          .map((r) => r.vaccine_name)
+          .join("、")}`}
+        confirmText={`确认删除 ${selected.size} 条`}
+        loading={batchDeleting}
+        onConfirm={handleBatchDelete}
+        onCancel={() => setBatchConfirm(false)}
+      />
 
       {/* Toast */}
       {toast && (
