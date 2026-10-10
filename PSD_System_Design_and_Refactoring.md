@@ -983,3 +983,42 @@ done
 #### 10.20.3 验证结论
 - 浏览器全链路（用户真实锚点 2026-05-01 孕1周）：深度表单今天自动填充 24/1、05-08 → 2/0、05-02 → 1/1，手改天数=3 后 05-16 提交落库「孕3周3天」；打卡弹窗今天 24/1、05-17 → 自动 3/2、手改天=4 后落库「孕3周4天」，同日 409 覆盖条出现与取消正常；console 零 JS 错误；
 - 数据治理：测试数据（05-16、05-17 两条）批删清理，用户原有 8 条记录完整保留（数据库核验通过）；新主包 `index-AFe2A9fr.js` 构建同步并重启生效。
+
+
+### 10.21 全面复查闭环重构与系统体验深度优化 (v1.59)
+
+#### 10.21.1 业务背景与复查问题识别
+在 v1.58 孕周推算与双输入落地后，对系统代码和运行效果做全面二次复查，发现 6 大核心优化点：
+1. **健康日历记录类型脱节与未来日期异常**：`HealthCalendar` 仅硬编码匹配 `vaccine`，导致后端返回的标准 `vaccination` 类型被降级为灰色无格式文本且丢失疫苗名称；同时日历点击未来日期会透传给打卡弹窗，导致后端 400 校验拦截。
+2. **宝宝生长曲线单Y轴严重挤压与女童标准缺失**：身高/头围 (35~100cm) 与体重 (3~15kg) 共用单一 Y 轴，导致体重走势被极度压缩扁平化；且仅内置男童 WHO 标准，女童档案无法对照。
+3. **主导航架构健康中心入口缺失**：顶栏与移动端底栏缺少 `/health` 导航入口，用户依赖外链或首页卡片跳转。
+4. **妈妈档案 Tab 1 双列表展示冗余**：上方已有 `BmiHistoryTable`，下方又全量渲染 `momRecords` 卡片流，列表重复、分页与批量删除重复，造成长达 3000px 的无谓垂直滚动。
+5. **跨组件数据刷新脱节**：`BmiAnalysisView` 为无 props 自闭环组件，当用户通过页头「健康打卡」或「CSV导入」更新数据时，看板与图表不会自动重载；反之在 BMI 卡片删除记录时外层 `HealthPage.records` 亦不联动。
+6. **多页面暗黑模式 (Dark Mode) 样式缺失**：`HomePage`、`ProductListPage`、`HealthCalendar` 等核心页面缺乏 `dark:` 适配类，深色主题下产生不可读暗色文字。
+
+#### 10.21.2 架构重构与实现细节
+1. **日历类型全兼容与未来日期防护 (`HealthCalendar.tsx`)**：
+   - `TYPE_COLORS` 与 `TYPE_LABELS` 全面支持 `vaccination` 与 `vaccine`，恢复疫苗名称与蓝色徽章。
+   - 增加 `isFuture` 禁用判定，未来日期单元格样式置灰 (`opacity-40 cursor-not-allowed`)，禁用点击，附带中文提示气泡，彻底阻断未来日期误触。
+   - 补全月份切换、星期栏、日期单元格的 dark mode 样式。
+2. **生长曲线双Y轴体系与女童WHO标准 (`GrowthChart.tsx`)**：
+   - 新增 `WHO_P50_GIRL` 0~3岁女童标准数据表，插值函数 `whoP50` 增加 `gender` 入参支持。
+   - ECharts 改为双 Y 轴：左轴为「长度 (cm)」（身高、头围及其WHO参考线），右轴为「体重 (kg)」（体重及其WHO参考线，`splitLine` 隐藏）。
+   - Tooltip 智能按指标格式化单位 (`cm`/`kg`)，底部文字按宝宝性别动态显示参考标准。
+   - `HealthPage` 宝宝生长档案头部自动通过 `authApi.babies()` 识别宝宝性别并提供男童/女童基线手动切换按钮。
+3. **主导航顶栏底栏一键直达 (`MainLayout.tsx`)**：
+   - `ALL_navItems` 正式纳入 `{ to: "/health", label: "健康中心", icon: HeartPulse, perm: "menu_health" }`。
+4. **妈妈档案单表融合与折叠详情 (`BmiHistoryTable.tsx` & `views.py`)**：
+   - 后端 `_build_bmi_timeseries` 补齐返回 `ai_analysis` 字段。
+   - `BmiHistoryTable` 增加折叠详情行 (`expandedIds`)，点击操作栏「详情」展开查看打卡备注与 AI 临床解读，并内置 `CopyButton` 快捷复制。
+   - `HealthPage` 移除底部重复渲染的 `momRecords` 卡片流，移除冗余分页与批删状态，页面精简度大幅提升。
+5. **跨组件双向数据联动与409覆盖完善 (`BmiAnalysisView.tsx` & `HealthPage.tsx`)**：
+   - `BmiAnalysisView` 增加 `refreshTrigger` 属性与 `onRecordChanged` 回调，打卡或导入时外部触发看板拉取，内部修改或删除时向外通知 `HealthPage.load()`。
+   - 完善 409 异常提取：同时检查 `err?.data` 与 `err?.response?.data?.data`，确保同日覆盖弹窗 100% 触发。
+   - 清除 `services.ts` 中误放于 `shoppingApi` 的冗余 `analyzeBmi`。
+6. **多页面深色模式 (Dark Mode) 全面对齐**：
+   - `HomePage.tsx`、`ProductListPage.tsx`、`ProductCard.tsx`、`HealthCalendar.tsx` 补齐 `dark:text-gray-100`、`dark:bg-gray-800` 等类名。
+
+#### 10.21.3 验证效果
+- 前端 `tsc -b && vite build` 生产构建通过，0 错误，静态产物同步到 `templates/` 和 `static/assets/`。
+- Django 后端 `manage.py check` 0 警告通过。

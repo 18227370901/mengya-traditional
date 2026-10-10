@@ -904,3 +904,33 @@ mengya-local/
 ### 18.4 涉及文件清单
 - 后端：`apps/core/serializers/health.py`（`gestational_days` 入参 0~6 可选）、`apps/core/views.py`（`user_input_days` 优先采纳 + clamp + `gestation_check.days` 回透）；
 - 前端：`frontend/src/components/health/UnifiedHealthCheckIn.tsx` 与 `components/health/BmiFormCard.tsx`（派生显示值 + touched 标记 + 周/天双输入框 + 提交携带 `gestational_days`）、`frontend/src/types/health.ts`（`BmiAnalysisInput.gestational_days`）。
+
+
+---
+
+## 19. v1.59 全面复查闭环重构与系统体验深度优化
+
+### 19.1 优化背景
+在 v1.58 孕周推算与双输入落地后，对系统代码和运行效果做全面二次复查，针对发现的 6 大核心优化点进行闭环修复与架构精简。
+
+### 19.2 核心优化与修复清单
+1. **健康日历记录类型与未来日期修复 (`HealthCalendar.tsx`)**：
+   - 记录类型兼容 `vaccination` 与历史 `vaccine`，恢复疫苗名称与蓝色徽章渲染，消除 raw 灰色英文文本。
+   - 增加未来日期禁用判定与样式置灰，禁止点击未来日期补录，杜绝后端 400 异常。
+   - 补齐全套 dark mode 深色模式样式类。
+2. **宝宝生长曲线双Y轴与女童WHO标准 (`GrowthChart.tsx`)**：
+   - 内置 `WHO_P50_GIRL` 0~3岁女童生长标准参考线，插值函数支持男/女童双基线。
+   - 引入双 Y 轴架构：左轴长度/头围 (cm)，右轴体重 (kg)，彻底解决曲线被压扁问题。
+   - Tooltip 动态带出单位 (`cm`/`kg`)，健康中心头部自动识别宝宝性别并提供男/女童切换按钮。
+3. **主导航架构一键直达 (`MainLayout.tsx`)**：
+   - 顶栏与移动端底栏 `ALL_navItems` 正式纳入「健康中心」(`/health`，`menu_health`)。
+4. **妈妈孕产档案单表融合与折叠详情 (`BmiHistoryTable.tsx` & `views.py`)**：
+   - 后端 `_build_bmi_timeseries` 补齐返回 `ai_analysis` 字段。
+   - `BmiHistoryTable` 增加详情展开折叠行，展示打卡备注与 AI 临床解读并支持一键复制。
+   - 移除 `HealthPage` 底部重复渲染的 `momRecords` 卡片流，根除 >3000px 冗余垂直滚动。
+5. **跨组件双向数据联动与409覆盖完善 (`BmiAnalysisView.tsx` & `HealthPage.tsx`)**：
+   - `BmiAnalysisView` 接入 `refreshTrigger` 与 `onRecordChanged`，实现与打卡弹窗、CSV导入弹窗双向实时联动刷新。
+   - 优化 409 异常提取逻辑，同日覆盖弹窗 100% 稳定弹出。
+   - 清理 `services.ts` 中误放于 `shoppingApi` 的冗余 `analyzeBmi`。
+6. **多页面暗黑模式 (Dark Mode) 全面对齐**：
+   - `HomePage.tsx`、`ProductListPage.tsx`、`ProductCard.tsx`、`HealthCalendar.tsx` 补齐深色模式样式，杜绝暗色文字不可读。
