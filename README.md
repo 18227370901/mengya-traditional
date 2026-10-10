@@ -882,3 +882,25 @@ mengya-local/
 ### 17.4 涉及文件清单
 - 后端：`apps/core/services/gestation_engine.py`（validate 透出 days）、`apps/core/views.py`（gestation_check.days + exam_items.gestational_days 存储 + note 带天数 + 时序透出 + CSV 小数孕周）、`apps/core/serializers/__init__.py`（记录接口 days 回填）；
 - 前端：`frontend/src/utils/gestation.ts`（新增共享推算工具）、`pages/HealthPage.tsx`（锚点提取传递 + 孕x周x天徽章）、`components/health/UnifiedHealthCheckIn.tsx`（锚点自动推算 + 预填 + 提示）、`BmiFormCard.tsx`（锚点推算 + 提示）、`BmiAnalysisView.tsx`（锚点传递 + 报告折叠容器重构）、`BmiHistoryTable.tsx`（孕x周x天）、`BmiTimeSeriesBoard.tsx`（轴标签与 tooltip）、`types/health.ts`（gestational_days）。
+
+## 18. 孕周输入自动填充修复与孕x周x天双输入修改（v1.58）
+
+### 18.1 问题与根因（自动填充失效）
+- **问题**：v1.57.1 里孕周输入框只显示 placeholder「自动推算」却无数值填充，用户仍需手填；且仅有整周输入，无法修改推算出的周内天数；
+- **根因**：自动填充依赖 `useEffect`（依赖 `gestation?.week`）setState 回填输入框——「推算值未变化不触发 effect」「弹窗打开重置与填充执行顺序竞争」「锚点异步加载时序」多重竞态叠加，导致输入框常为空。
+
+### 18.2 派生显示值方案（两条录入链路同构改造）
+- **模型转换**：彻底删除「effect 回填」模式，改为 **touched 标记 + 派生显示值**——`weekDisplay = !weekTouched && gestation ? String(gestation.week) : manualWeek`，未手动编辑时输入框直接绑定推算值（自动填充绝对可靠、无时序依赖），用户 onChange 即置 touched、此后绑定用户值；`useEffect` 职责收缩为「日期/模式变化时重置 touched 回到自动推算」，不再承担填充职责；
+- **孕x周x天双输入框**：打卡弹窗与深度 BMI 表单孕周块统一为「[周] 周 [天] 天」双输入框（周 1~42 必填、天 0~6），placeholder「自动推算」/「天」；提示行显示推算依据（档案预产期 / 首次打卡锚点），周与天均可手改（周数偏差 ±1 周内，超差后端 400 拦截）；
+- **深度表单产后月龄同构升级**：`postpartumMonthsDisplay` 派生值（宝宝生日推算优先、可手改），一并消除 effect 竞态；
+- **提交口径统一**：提交一律以「显示值」为准（未编辑=推算值、已编辑=用户值），天数 clamp 0~6 后随 `gestational_days` 上送；打卡 409 覆盖重发链路同口径；
+- **后端采纳优先级**：`BmiAnalysisInputSerializer` 新增 `gestational_days`（IntegerField 0~6 可选）；BMI 分析接口用户显式传天数优先采纳（clamp 0~6），未传沿用孕周引擎推算值；周数仍经双基准校验（偏差 >1 周 400 拦截）；`gestation_check.days` 回透最终采纳值（历史回显一致）。
+
+### 18.3 验证结论（用户真实锚点 2026-05-01 孕1周 全链路实测）
+- 深度表单：今天自动填充 **周24/天1**；改 05-08 → 2/0；改 05-02 → 1/1；手改天数=3 后 05-16 提交，落库「孕3周3天」（数据库核验通过）；
+- 打卡弹窗：今天 24/1；改 05-17 → 自动 3/2，手改天=4 后保存，落库「孕3周4天」；同日 409 覆盖弹窗条出现与取消正常；
+- 构建与运行：新主包 `index-AFe2A9fr.js` 构建同步、服务重启生效；console 零 JS 错误；测试数据（05-16/05-17）已批删清理，用户原有 8 条记录完整保留（数据库核验通过）。
+
+### 18.4 涉及文件清单
+- 后端：`apps/core/serializers/health.py`（`gestational_days` 入参 0~6 可选）、`apps/core/views.py`（`user_input_days` 优先采纳 + clamp + `gestation_check.days` 回透）；
+- 前端：`frontend/src/components/health/UnifiedHealthCheckIn.tsx` 与 `components/health/BmiFormCard.tsx`（派生显示值 + touched 标记 + 周/天双输入框 + 提交携带 `gestational_days`）、`frontend/src/types/health.ts`（`BmiAnalysisInput.gestational_days`）。
