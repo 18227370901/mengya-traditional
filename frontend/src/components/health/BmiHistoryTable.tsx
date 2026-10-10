@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { ClipboardList, Trash2 } from "lucide-react";
 import type { BmiTimeSeriesRecord } from "@/types/health";
+import { gestationLabel } from "@/utils/gestation";
 import { useAuthStore } from "@/store/authStore";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import PaginationBar, { useListPagination } from "@/components/ui/PaginationBar";
@@ -215,12 +216,12 @@ export default function BmiHistoryTable({ records, loading, onDelete, onBatchDel
                             ? `产后 ${r.postpartum_months} 个月`
                             : "产后恢复"
                           : r.gestational_week
-                          ? `孕 ${r.gestational_week} 周`
+                          ? gestationLabel(r.gestational_week, r.gestational_days)
                           : r.stage === "pregnancy"
                           ? "孕期"
                           : r.record_type === "prenatal_exam"
                           ? r.gestational_week
-                            ? `孕 ${r.gestational_week} 周`
+                            ? gestationLabel(r.gestational_week, r.gestational_days)
                             : "孕期"
                           : "—"}
                       </td>

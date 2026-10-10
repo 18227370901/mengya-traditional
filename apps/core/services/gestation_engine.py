@@ -89,8 +89,9 @@ def validate_gestational_week(
     """
     校验用户手填孕周与推算孕周的一致性。
     返回:
-      {"ok": True, "week": 最终孕周, "auto_filled": bool, "basis": str, "hint": str}
+      {"ok": True, "week": 最终孕周, "days": 周内天数(0~6), "auto_filled": bool, "basis": str, "hint": str}
       {"ok": False, "expected": int, "label": str}  -> 偏差超过 1 周，应拦截并提示
+    v1.58：全部成功路径透出 days（孕X周Y天粒度），供存储与前端"孕x周x天"展示复用。
     """
     expected = get_expected_week(user, record_date)
 
@@ -100,6 +101,7 @@ def validate_gestational_week(
             return {
                 "ok": True,
                 "week": gestational_week,
+                "days": 0,
                 "auto_filled": False,
                 "basis": "manual",
                 "hint": "尚未设置预产期，本次孕周以您手填为准；建议在「我的-档案」中设置预产期以自动校准",
@@ -107,18 +109,21 @@ def validate_gestational_week(
         return {
             "ok": True,
             "week": None,
+            "days": None,
             "auto_filled": False,
             "basis": "manual",
             "hint": "",
         }
 
     exp_week = expected["week"]
+    exp_days = expected["days"]
 
-    # 未手填孕周：自动采用推算值
+    # 未手填孕周：自动采用推算值（周+天）
     if gestational_week is None:
         return {
             "ok": True,
             "week": exp_week,
+            "days": exp_days,
             "auto_filled": True,
             "basis": expected["basis"],
             "hint": f"已按档案基准自动填充孕周：{expected['label']}",
@@ -137,10 +142,11 @@ def validate_gestational_week(
             ),
         }
 
-    # 偏差在允许范围内（含相等）：以手填为准
+    # 偏差在允许范围内（含相等）：以手填为准；周数一致时沿用推算的周内天数，微调时按整周（0天）
     return {
         "ok": True,
         "week": gestational_week,
+        "days": exp_days if gestational_week == exp_week else 0,
         "auto_filled": False,
         "basis": expected["basis"],
         "hint": "",

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "echarts";
 import { LineChart as LineChartIcon, BarChart3, TrendingUp } from "lucide-react";
 import { useThemeStore } from "@/store/themeStore";
+import { gestationLabel } from "@/utils/gestation";
 import type { BmiTimeSeriesRecord } from "@/types/health";
 
 /**
@@ -63,7 +64,7 @@ function getWeekTarget(week: number, category: BmiCategory, isTwins: boolean) {
 
 function recordLabel(r: BmiTimeSeriesRecord): string {
   const datePart = r.record_date.slice(5);
-  // v1.55/1.56 语义统一：按 stage 区分（兼容历史数据 record_type 回推）
+  // v1.55/1.56 语义统一：按 stage 区分（兼容历史数据 record_type 回推）；v1.58 孕x周x天粒度
   if (r.stage === "postpartum") {
     return r.postpartum_months != null ? `${datePart} 产后${r.postpartum_months}月` : `${datePart} 产后`;
   }
@@ -71,7 +72,7 @@ function recordLabel(r: BmiTimeSeriesRecord): string {
     return `${datePart} 非孕期`;
   }
   if (r.stage === "pregnancy" || r.record_type === "prenatal_exam") {
-    return r.gestational_week ? `${datePart} 孕${r.gestational_week}周` : `${datePart} 孕期`;
+    return r.gestational_week ? `${datePart} ${gestationLabel(r.gestational_week, r.gestational_days)}` : `${datePart} 孕期`;
   }
   return datePart;
 }
@@ -256,7 +257,7 @@ export default function BmiTimeSeriesBoard({ records, loading }: BmiTimeSeriesBo
           formatter: (params: any) => {
             const rec = filtered[params[0]?.dataIndex];
             if (!rec) return "";
-            let tip = `<b>${rec.record_date}${rec.gestational_week ? ` · 孕${rec.gestational_week}周` : rec.stage === "postpartum" ? " · 产后" : rec.stage === "general" ? " · 非孕期" : ""}</b><br/>`;
+            let tip = `<b>${rec.record_date}${rec.gestational_week ? ` · ${gestationLabel(rec.gestational_week, rec.gestational_days)}` : rec.stage === "postpartum" ? " · 产后" : rec.stage === "general" ? " · 非孕期" : ""}</b><br/>`;
             if (rec.target) {
               tip += `<span style="color:#10b981">●</span> 当周适宜增重：${rec.target.min} ~ ${rec.target.max} kg<br/>`;
               tip += `<span style="color:#34d399">--</span> 适宜中位：${rec.target.median} kg<br/>`;
@@ -365,7 +366,7 @@ export default function BmiTimeSeriesBoard({ records, loading }: BmiTimeSeriesBo
             const val = param.value as number;
             const verdict =
               val > 0.9 ? "⚠ 超出单次安全阈值" : val > 0.6 ? "注意：增重偏快" : val < -0.5 ? "体重明显下降，请关注" : "处于安全范围";
-            return `<b>${rec.record_date}${rec.gestational_week ? ` · 孕${rec.gestational_week}周` : rec.stage === "postpartum" ? " · 产后" : ""}</b><br/>较上次变化：<b>${val > 0 ? "+" : ""}${val} kg</b><br/>${verdict}`;
+            return `<b>${rec.record_date}${rec.gestational_week ? ` · ${gestationLabel(rec.gestational_week, rec.gestational_days)}` : rec.stage === "postpartum" ? " · 产后" : ""}</b><br/>较上次变化：<b>${val > 0 ? "+" : ""}${val} kg</b><br/>${verdict}`;
           },
         },
         grid: { top: 30, right: 25, bottom: 45, left: 45 },

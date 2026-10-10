@@ -2217,12 +2217,16 @@ class HealthRecordViewSet(viewsets.ModelViewSet):
                         else:
                             stage = "general"
                     gestational_week = None
+                    gestational_days = None
                     if stage == "pregnancy":
                         wk = _to_float(row.get("week"))
                         gestational_week = int(wk) if wk else None
                         if gestational_week is None:
                             _fail("孕期记录必须提供 week（孕周）列，或改用 postpartum/general 阶段导入")
                             continue
+                        # v1.58：week 列支持小数（如 23.5 = 孕23周3天），整数部分为周、小数×7为天
+                        gestational_days = int(round((wk - int(wk)) * 7))
+                        gestational_days = max(0, min(6, gestational_days))
                     bmi_val = None
                     if height and weight:
                         bmi_val = round(weight / ((height / 100.0) ** 2), 2)
@@ -2231,6 +2235,8 @@ class HealthRecordViewSet(viewsets.ModelViewSet):
                         "waist_circumference": waist,
                         "pre_weight": inherit_pre_weight,
                         "bmi": bmi_val,
+                        # v1.58：孕x周x天粒度（仅孕期阶段）
+                        "gestational_days": gestational_days,
                     }
                     if existing:
                         existing.gestational_week = gestational_week
@@ -2348,6 +2354,8 @@ def _build_bmi_timeseries(user):
                 "record_type": r.record_type,
                 "stage": stage,
                 "gestational_week": r.gestational_week,
+                # v1.58：孕x周x天粒度（历史无 days 的记录为 None，展示层降级为整周）
+                "gestational_days": items.get("gestational_days"),
                 "height": r.height,
                 "weight": r.weight,
                 "waist_circumference": w_circum,
@@ -2459,11 +2467,14 @@ class HealthBmiAnalysisView(APIView):
                 status=status.HTTP_409_CONFLICT,
             )
         gestational_week = data.get("gestational_week")
-        gestation_check = {"week": None, "basis": "", "auto_filled": False, "hint": ""}
+        # v1.58：孕x周x天粒度——validate 透出周内天数（0~6）随记录存储
+        gestational_days = 0
+        gestation_check = {"week": None, "days": 0, "basis": "", "auto_filled": False, "hint": ""}
         if stage_type == "pregnancy":
             wk_check = validate_gestational_week(request.user, target_date, gestational_week)
             gestation_check = {
                 "week": wk_check.get("week"),
+                "days": wk_check.get("days"),
                 "basis": wk_check.get("basis", ""),
                 "auto_filled": wk_check.get("auto_filled", False),
                 "hint": wk_check.get("hint", ""),
@@ -2479,6 +2490,7 @@ class HealthBmiAnalysisView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             gestational_week = wk_check["week"]
+            gestational_days = int(wk_check.get("days") or 0)
         else:
             gestational_week = None
 
@@ -2528,9 +2540,15 @@ class HealthBmiAnalysisView(APIView):
             "gain_status": evaluation.get("gain_status", "normal"),
             "is_twins": bool(data.get("is_twins", False)),
             "postpartum_months": data.get("postpartum_months"),
+            # v1.58：孕x周x天粒子度存储（孕期阶段专用，供前端展示与后续推算）
+            "gestational_days": gestational_days if stage_mark == "pregnancy" else None,
         }
+        stage_prefix = (
+            "非孕期" if stage_mark == "general" else "产后" if stage_mark == "postpartum"
+            else f"孕{gestational_week}周{gestational_days}天" if gestational_days > 0 else f"孕{gestational_week}周"
+        )
         note_text = (
-            f"{'非孕期' if stage_mark == 'general' else '产后' if stage_mark == 'postpartum' else f'孕{gestational_week}周'}打卡："
+            f"{stage_prefix}打卡："
             f"孕前BMI {evaluation['bmi']} ({evaluation['category_label']}), "
             f"累计增重 {evaluation['actual_gain']}kg ({evaluation.get('gain_status_label', '')})"
         )

@@ -34,6 +34,8 @@ export interface BmiTimeSeriesRecord {
   /** 妈妈记录阶段：pregnancy 孕期 / postpartum 产后 / general 非孕期（v1.55/1.56 语义统一） */
   stage?: "pregnancy" | "postpartum" | "general";
   gestational_week?: number | null;
+  /** v1.58：孕x周x天粒度——周内天数（0~6，历史记录可能为空） */
+  gestational_days?: number | null;
   height?: number | null;
   weight: number;
   waist_circumference?: number | null;

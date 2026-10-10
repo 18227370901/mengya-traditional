@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { Activity, Sparkles, AlertCircle, Calendar, CheckCircle2 } from "lucide-react";
 import { useAuthStore } from "@/store/authStore";
+import { computeGestation, type GestationAnchor } from "@/utils/gestation";
 import type { BmiAnalysisInput, PregnancyStage } from "@/types/health";
 
 interface BmiFormCardProps {
@@ -9,6 +10,8 @@ interface BmiFormCardProps {
   /** v1.56：最近一次打卡基线预填（身高/孕前体重连续预填，减少重复录入） */
   initialHeight?: number | null;
   initialPreWeight?: number | null;
+  /** v1.58：孕周锚点（首次孕期打卡 日期+孕周；无预产期时自动推算 孕x周x天） */
+  gestationAnchor?: GestationAnchor | null;
 }
 
 const MEDICAL_HISTORY_OPTIONS = [
@@ -19,17 +22,6 @@ const MEDICAL_HISTORY_OPTIONS = [
   { key: "thyroid", label: "甲状腺功能异常" },
 ];
 
-/** 基于预产期的 280 天医学模型自动推算孕周（与后端 gestation_engine 一致） */
-function autoWeekFromDueDate(dueDate: string, recordDate: string): number | null {
-  const due = new Date(dueDate);
-  const rec = new Date(recordDate);
-  if (Number.isNaN(due.getTime()) || Number.isNaN(rec.getTime())) return null;
-  const lmp = due.getTime() - 280 * 86400000;
-  const days = Math.floor((rec.getTime() - lmp) / 86400000);
-  if (days < 0) return 0;
-  return Math.min(40, Math.floor(days / 7));
-}
-
 /** 基于宝宝生日自动推算产后月龄 */
 function autoPostpartumMonths(babyBirthday: string, recordDate: string): number | null {
   const birth = new Date(babyBirthday);
@@ -38,10 +30,12 @@ function autoPostpartumMonths(babyBirthday: string, recordDate: string): number 
   return Math.max(0, Math.floor((rec.getTime() - birth.getTime()) / (30.44 * 86400000)));
 }
 
-export default function BmiFormCard({ onSubmit, loading, initialHeight, initialPreWeight }: BmiFormCardProps) {
+export default function BmiFormCard({ onSubmit, loading, initialHeight, initialPreWeight, gestationAnchor }: BmiFormCardProps) {
   const { user } = useAuthStore();
   const hasDueDate = !!user?.due_date;
   const hasBabyBirthday = !!user?.baby_birthday;
+  // v1.58：预产期或首次打卡锚点任一存在即自动推算孕周（展示孕x周x天，免手填）
+  const hasAutoBasis = hasDueDate || !!gestationAnchor;
 
   const [recordDate, setRecordDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
   // v1.56：基线连续预填——最近一次打卡的身高/孕前体重自动带入（仍可修改）
@@ -63,13 +57,20 @@ export default function BmiFormCard({ onSubmit, loading, initialHeight, initialP
   const [medicalHistory, setMedicalHistory] = useState<string[]>([]);
   const [errorMsg, setErrorMsg] = useState<string>("");
 
-  // 孕周自动推算：已设预产期时随打卡日期联动填充（允许 ±1 周内微调，超出由后端拦截）
+  // v1.58 孕周双基准自动推算（与后端一致）：预产期 280 天模型 > 首次打卡锚点线性外推
+  const gestation = useMemo(() => {
+    if (stageType !== "pregnancy") return null;
+    if (user?.due_date) return computeGestation({ date: user.due_date, week: 40 }, recordDate);
+    if (gestationAnchor) return computeGestation(gestationAnchor, recordDate);
+    return null;
+  }, [stageType, user?.due_date, gestationAnchor, recordDate]);
+
+  // 孕周自动推算：随打卡日期联动填充（允许 ±1 周微调，超出由后端拦截）
   useEffect(() => {
-    if (stageType === "pregnancy" && hasDueDate && user?.due_date) {
-      const wk = autoWeekFromDueDate(user.due_date, recordDate);
-      if (wk != null) setGestationalWeek(String(wk));
+    if (stageType === "pregnancy" && gestation) {
+      setGestationalWeek(String(gestation.week));
     }
-  }, [stageType, hasDueDate, user?.due_date, recordDate]);
+  }, [stageType, gestation?.week, recordDate, hasDueDate]);
 
   // 产后月龄自动推算：已设宝宝生日时随打卡日期联动填充
   useEffect(() => {
@@ -145,10 +146,10 @@ export default function BmiFormCard({ onSubmit, loading, initialHeight, initialP
 
     if (stageType === "pregnancy") {
       const gwNum = parseInt(gestationalWeek, 10);
-      if (isNaN(gwNum) || gwNum < 1 || gwNum > 42) {
+      if (isNaN(gwNum) || gwNum < 0 || gwNum > 42) {
         setErrorMsg(
-          hasDueDate
-            ? "孕周自动推算失败，请核对档案预产期"
+          hasAutoBasis
+            ? "孕周自动推算失败，请核对档案预产期或首次打卡记录"
             : "您还未设置预产期，请手动填写当前孕周 (1 ~ 42周)"
         );
         return;
@@ -256,25 +257,28 @@ export default function BmiFormCard({ onSubmit, loading, initialHeight, initialP
             {stageType === "pregnancy" ? (
               <>
                 <label className="label">
-                  当前孕周 (1 ~ 42 周) {hasDueDate ? "· 按预产期自动" : "*"}
+                  当前孕周 (0 ~ 42 周) {hasAutoBasis ? "· 自动推算" : "*"}
                 </label>
                 <div className="flex items-center gap-2">
                   <input
                     type="number"
-                    min="1"
+                    min="0"
                     max="42"
                     className="input"
-                    placeholder={hasDueDate ? "按预产期自动填充" : "例如 24"}
+                    placeholder={hasAutoBasis ? "自动推算填充" : "例如 24"}
                     value={gestationalWeek}
                     onChange={(e) => setGestationalWeek(e.target.value)}
                     required
                   />
                   <span className="text-xs text-gray-400">周</span>
                 </div>
-                {hasDueDate && (
+                {gestation && (
                   <p className="mt-1 flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
                     <CheckCircle2 className="h-3 w-3" />
-                    随打卡日期按预产期自动推算，允许 ±1 周内微调
+                    本日期推算为 {gestation.label}
+                    {hasDueDate
+                      ? "（按档案预产期，允许 ±1 周微调）"
+                      : `（按首次打卡 ${gestationAnchor!.date} 孕${gestationAnchor!.week}周，允许 ±1 周微调）`}
                   </p>
                 )}
               </>

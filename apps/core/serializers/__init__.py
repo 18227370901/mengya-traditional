@@ -469,6 +469,11 @@ class HealthRecordSerializer(serializers.ModelSerializer):
                     )
                 if check["week"] is not None:
                     attrs["gestational_week"] = check["week"]
+                    # v1.58：孕x周x天粒度——周内天数随 exam_items 持久化（不迁移表结构）
+                    items = attrs.get("exam_items")
+                    items = dict(items) if isinstance(items, dict) else {}
+                    items["gestational_days"] = int(check.get("days") or 0)
+                    attrs["exam_items"] = items
         return attrs
 
     def create(self, validated_data):

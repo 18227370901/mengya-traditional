@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Baby, Calendar, CalendarCheck, LineChart, Plus, Trash2, HeartPulse, FileUp } from "lucide-react";
 import CopyButton from "@/components/CopyButton";
 import { healthApi } from "@/api/services";
+import { extractGestationAnchor, gestationLabel } from "@/utils/gestation";
 import type { HealthRecord } from "@/types";
 import GrowthChart from "@/components/GrowthChart";
 import VaccineCalendar from "@/components/VaccineCalendar";
@@ -32,7 +33,7 @@ const TABS: Array<{ key: TabKey; label: string; icon: typeof CalendarCheck }> = 
   { key: "calendar", label: "健康时间轴", icon: Calendar },
 ];
 
-/** 妈妈记录的阶段徽章（v1.55/1.56：按 exam_items.stage 与孕周判断，含非孕期） */
+/** 妈妈记录的阶段徽章（v1.55/1.56：按 exam_items.stage；v1.58：孕x周x天） */
 function MomStageBadge({ record }: { record: HealthRecord }) {
   const stage = record.exam_items?.stage;
   if (stage === "postpartum") {
@@ -50,9 +51,10 @@ function MomStageBadge({ record }: { record: HealthRecord }) {
     );
   }
   if (record.gestational_week) {
+    const gDays = record.exam_items?.gestational_days;
     return (
       <span className="rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-semibold text-brand-600 dark:bg-brand-950/50 dark:text-brand-300">
-        孕{record.gestational_week}周
+        {gestationLabel(record.gestational_week, typeof gDays === "number" ? gDays : null)}
       </span>
     );
   }
@@ -139,6 +141,9 @@ export default function HealthPage() {
   // ===== v1.55/1.56 统一数据口径：妈妈记录 = prenatal_exam；宝宝记录 = growth_measurement =====
   const momRecords = records.filter((r) => r.record_type === "prenatal_exam");
   const growthRecords = records.filter((r) => r.record_type === "growth_measurement");
+
+  // v1.58：首次孕期打卡锚点（打卡弹窗无预产期时孕周自动推算 孕x周x天）
+  const gestationAnchor = useMemo(() => extractGestationAnchor(records), [records]);
 
   // 生长曲线数据源：仅宝宝测量记录（妈妈数据不再混入宝宝曲线）
   const growthChartPoints = growthRecords.map((r) => ({
@@ -229,11 +234,12 @@ export default function HealthPage() {
         ))}
       </div>
 
-      {/* 统一健康打卡弹窗（唯一录入入口：妈妈孕期/产后/非孕期 + 宝宝生长测量） */}
+      {/* 统一健康打卡弹窗（唯一录入入口：妈妈孕期/产后/非孕期 + 宝宝生长测量；v1.58 孕周锚点自动推算） */}
       <UnifiedHealthCheckIn
         isOpen={showCheckIn}
         onClose={() => setShowCheckIn(false)}
         initialDate={checkInDate}
+        gestationAnchor={gestationAnchor}
         onSaved={(archiveHint) => {
           showToast(archiveHint);
           load();

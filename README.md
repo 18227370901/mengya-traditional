@@ -856,3 +856,29 @@ mengya-local/
 ### 16.8 涉及文件清单
 - 后端：`apps/core/views.py`（同日查重/409/overwrite/批删/批量导入 + BMI 接口权限补齐）、`apps/core/serializers/health.py`（overwrite + 未来日期）、`apps/core/serializers/__init__.py`（未来日期）、`apps/core/utils/permissions.py`（4-Tab 描述同步）、`apps/core/services/diet_recommendation_service.py`（食材正则提取）；
 - 前端：`frontend/src/pages/HealthPage.tsx`（列表管理+导入入口）、`frontend/src/components/ui/ConfirmDialog.tsx`（新增）、`ui/PaginationBar.tsx`（新增 hook+组件）、`components/VaccineCalendar.tsx`（全量记录管理区）、`components/health/BmiHistoryTable.tsx`（勾选批删分页）、`BmiAnalysisView.tsx`（折叠+批删+409+导出入口）、`BmiFormCard.tsx`（日期 max）、`BmiTimeSeriesBoard.tsx`（图表热更新）、`UnifiedHealthCheckIn.tsx`（409 覆盖链路+软提示+四列布局）、`SearXNGConfigModal.tsx`（预设）、`HealthReportExport.tsx`（新增）、`CsvImportModal.tsx`（新增）、`api/services.ts`、`types/health.ts`、`vite.config.ts`（manualChunks）、`package.json`（jspdf + html2canvas）。
+
+## 17. 孕周锚点自动推算（孕x周x天）与报告区块归属优化（v1.57.1）
+
+### 17.1 孕周双基准自动推算（无预产期场景补全）
+- **问题**：无预产期的用户录入过一次孕期数据（如 2026-05-01 孕1周）后，再次打卡选其他日期时孕周仍要求手填——没有利用已录入的锚点自动计算；
+- **实现**：`gestation_engine` 双基准（预产期 280 天模型 > 最早孕期打卡锚点线性外推，原有能力）首次贯通到前端两条录入链路：
+  - **统一打卡弹窗**：孕期模式下无预产期但有锚点时，孕周随日期自动推算并预填（可 ±1 周微调，超偏差后端拦截），日期变更即时联动（2026-05-01 孕1周 → 选 05-08 自动显示"孕2周"→ 选 05-02 自动显示"孕1周1天"）；完全无基准（首次打卡且无预产期）才要求手填；
+  - **深度 BMI 表单**：同样接入锚点推算，输入框自动填充 + 「本日期推算为 孕X周Y天（按首次打卡 …，允许 ±1 周微调）」提示；
+- **新增 孕x周x天 粒度**：`validate_gestational_week` 全部成功路径透出 `days`（周内天数 0~6），随 `exam_items.gestational_days` 零迁移存储；手填与推算周数一致时沿用推算天数、微调 ±1 时按整周（0 天）；40 周封顶超期天数保留（孕40周+N天）；
+- **兼容相邻日期录入**：锚点次日起任意日期均可打卡（05-01 录入后 05-02 显示孕1周1天可直接保存），与同日唯一（409 覆盖）互不冲突；
+- **显示层全面升级**：历史表阶段列、妈妈明细卡片徽章、图表看板轴标签与 tooltip、报告摘要统一 `gestationLabel`（孕X周 / 孕X周Y天），历史无 days 的记录自动降级为整周显示；
+- **CSV 导入增强**：mom 模板 `week` 列支持小数（如 23.5 = 孕23周3天），小数部分 ×7 折算天数入库；
+- **前端共享工具**：`frontend/src/utils/gestation.ts`——`computeGestation`（280 天模型/锚点外推）、`gestationLabel`（展示格式）、`extractGestationAnchor`（最早孕期打卡锚点提取，与后端 first_anchor 查询口径一致）。
+
+### 17.2 分析报告区块归属优化（折叠按钮挪位）
+- **问题**：「展开/收起分析报告」按钮挂在模块头部（与导出按钮并排），离报告内容区太远，用户无法分辨"分析报告"到底指哪部分内容；
+- **实现**：折叠按钮下移至**报告区块自身的标题栏**——报告包裹为独立卡片，标题栏含「📊 本次分析报告」标题 + **评估摘要行**（孕X周Y天评估 · 实际增重 Xkg（状态））+ 「收起/展开报告内容」按钮；收起时仅保留标题栏（摘要可见），展开时显示完整五区块（医学预警 / 指标概览 / WS/T 曲线 / 食谱方案 / 运动关怀）；模块头部仅保留「导出评估报告」。
+
+### 17.3 验证结论（用户真实锚点 2026-05-01 孕1周 全链路实测）
+- 后端冒烟：锚点推算（05-02→孕1周1天 / 05-08→孕2周 / 今天→孕24周1天）全对、validate 自动填充透出 days、手填一致透传/微调归零/偏差拦截、BMI 接口自动归档 `孕1周1天` note + exam_items 存储 + 时序透出、同日 409、历史记录 days=None 降级整周——全部通过；
+- 浏览器实测：打卡弹窗今天默认预填 24、改 05-08 预填 2、改 05-02 预填 1（提示均显示"按首次打卡 2026-05-01 孕1周自动推算"）、05-02 保存归档成功且历史表/明细卡片/看板显示"孕1周1天"、深度表单推算提示（今天 24 周 1 天）、报告标题栏折叠按钮（收起时曲线区隐藏、展开恢复、模块头部无旧按钮）、console 零 JS 错误；
+- 测试数据已清理（05-02 与 10-09 两条验证记录批删），用户原有数据（05-01/05-08/05-15 三条孕期打卡 + 宝宝测量）完整保留。
+
+### 17.4 涉及文件清单
+- 后端：`apps/core/services/gestation_engine.py`（validate 透出 days）、`apps/core/views.py`（gestation_check.days + exam_items.gestational_days 存储 + note 带天数 + 时序透出 + CSV 小数孕周）、`apps/core/serializers/__init__.py`（记录接口 days 回填）；
+- 前端：`frontend/src/utils/gestation.ts`（新增共享推算工具）、`pages/HealthPage.tsx`（锚点提取传递 + 孕x周x天徽章）、`components/health/UnifiedHealthCheckIn.tsx`（锚点自动推算 + 预填 + 提示）、`BmiFormCard.tsx`（锚点推算 + 提示）、`BmiAnalysisView.tsx`（锚点传递 + 报告折叠容器重构）、`BmiHistoryTable.tsx`（孕x周x天）、`BmiTimeSeriesBoard.tsx`（轴标签与 tooltip）、`types/health.ts`（gestational_days）。

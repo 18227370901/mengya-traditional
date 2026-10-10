@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useAuthStore } from "@/store/authStore";
 import { healthApi } from "@/api/services";
+import { computeGestation, gestationLabel, type GestationAnchor } from "@/utils/gestation";
 import type { BmiAnalysisInput, HealthRecord } from "@/types";
 import type { SameDayConflictPayload } from "@/types/health";
 
@@ -33,17 +34,8 @@ interface UnifiedHealthCheckInProps {
   onSaved: (archiveHint: string) => void;
   /** v1.56：预填测量日期（健康时间轴点击日期补录入口） */
   initialDate?: string;
-}
-
-/** 基于预产期的 280 天医学模型自动推算孕周（与后端 gestation_engine 保持一致） */
-function autoWeekFromDueDate(dueDate: string, recordDate: string): number | null {
-  const due = new Date(dueDate);
-  const rec = new Date(recordDate);
-  if (Number.isNaN(due.getTime()) || Number.isNaN(rec.getTime())) return null;
-  const lmp = due.getTime() - 280 * 86400000;
-  const days = Math.floor((rec.getTime() - lmp) / 86400000);
-  if (days < 0) return 0;
-  return Math.min(40, Math.floor(days / 7));
+  /** v1.58：孕周锚点（首次孕期打卡的 日期+孕周；无预产期时自动推算 孕x周x天） */
+  gestationAnchor?: GestationAnchor | null;
 }
 
 /** 依据宝宝生日自动推算天数差 */
@@ -54,10 +46,12 @@ function daysBetween(fromDate: string, toDate: string): number | null {
   return Math.max(0, Math.floor((to.getTime() - from.getTime()) / 86400000));
 }
 
-export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved, initialDate }: UnifiedHealthCheckInProps) {
+export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved, initialDate, gestationAnchor }: UnifiedHealthCheckInProps) {
   const { user } = useAuthStore();
   const hasDueDate = !!user?.due_date;
   const hasBabyBirthday = !!user?.baby_birthday;
+  // v1.58：无预产期但有首次打卡锚点时，孕周同样自动推算（不强制手填）
+  const hasAutoBasis = hasDueDate || !!gestationAnchor;
 
   const [mode, setMode] = useState<CheckInMode>("mom_pregnancy");
   const [recordDate, setRecordDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -100,11 +94,25 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved, initial
     setNote("");
   }, [isOpen, user?.is_pregnant, user?.baby_birthday, initialDate]);
 
-  // 孕周自动推算（有预产期时）
-  const autoWeek = useMemo(() => {
-    if (mode !== "mom_pregnancy" || !user?.due_date) return null;
-    return autoWeekFromDueDate(user.due_date, recordDate);
-  }, [mode, user?.due_date, recordDate]);
+  // v1.58 孕周自动推算（双基准与后端一致）：预产期 280 天模型 > 首次打卡锚点线性外推；
+  // 返回 {week, days, label}，展示粒度为 孕x周x天
+  const gestation = useMemo(() => {
+    if (mode !== "mom_pregnancy") return null;
+    if (user?.due_date) {
+      return computeGestation({ date: user.due_date, week: 40 }, recordDate);
+    }
+    if (gestationAnchor) {
+      return computeGestation(gestationAnchor, recordDate);
+    }
+    return null;
+  }, [mode, user?.due_date, gestationAnchor, recordDate]);
+
+  // 锚点推算时同步预填孕周输入框（允许 ±1 周微调，超出由后端拦截）
+  useEffect(() => {
+    if (mode === "mom_pregnancy" && gestation) {
+      setManualWeek(String(gestation.week));
+    }
+  }, [mode, gestation?.week, recordDate]);
 
   // 产后天数 / 宝宝天数自动推算
   const babyDays = useMemo(() => {
@@ -154,7 +162,11 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved, initial
     {
       key: "mom_pregnancy",
       label: "我 · 孕期产检",
-      desc: hasDueDate ? "孕周按预产期自动推算" : "需手填孕周，建议先设置预产期",
+      desc: hasDueDate
+        ? "孕周按预产期自动推算（孕x周x天）"
+        : gestationAnchor
+        ? `孕周按首次打卡 ${gestationAnchor.date} 孕${gestationAnchor.week}周自动推算`
+        : "需手填孕周，建议先设置预产期",
       icon: PersonStanding,
     },
     {
@@ -192,7 +204,7 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved, initial
         setErrorMsg("请填写本次实测体重 (kg)");
         return;
       }
-      if (momMode && !hasDueDate && !manualWeek) {
+      if (momMode && !hasAutoBasis && !manualWeek) {
         setErrorMsg("您还未设置预产期，请手动填写本次打卡的孕周");
         return;
       }
@@ -230,7 +242,8 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved, initial
           is_twins: false,
         };
         if (momMode) {
-          payload.gestational_week = hasDueDate ? (autoWeek ?? undefined) : Number(manualWeek);
+          // v1.58：有推算基准（预产期/首次打卡锚点）时优先采用推算孕周，无基准时手填
+          payload.gestational_week = gestation ? gestation.week : Number(manualWeek);
         } else if (isPostpartumMode) {
           payload.postpartum_months = babyDays != null ? Math.max(0, Math.floor(babyDays / 30.44)) : 1;
         }
@@ -272,7 +285,7 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved, initial
             is_twins: false,
           };
           if (momMode) {
-            payload.gestational_week = hasDueDate ? (autoWeek ?? undefined) : Number(manualWeek);
+            payload.gestational_week = gestation ? gestation.week : Number(manualWeek);
           } else if (isPostpartumMode) {
             payload.postpartum_months = babyDays != null ? Math.max(0, Math.floor(babyDays / 30.44)) : 1;
           }
@@ -429,10 +442,18 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved, initial
               onChange={(e) => setRecordDate(e.target.value)}
               required
             />
-            {momMode && hasDueDate && autoWeek != null && (
+            {/* v1.58：孕周自动推算提示（双基准：预产期 / 首次打卡锚点；展示孕x周x天） */}
+            {momMode && gestation && user?.due_date && (
               <p className="mt-1 text-[11px] text-emerald-600 dark:text-emerald-400">
                 <CheckCircle2 className="mr-0.5 inline h-3 w-3" />
-                按档案预产期自动记录为：孕 {autoWeek} 周（无需手填，后端同步校验）
+                按档案预产期自动记录为：{gestation.label}（无需手填，后端同步校验）
+              </p>
+            )}
+            {momMode && gestation && !user?.due_date && gestationAnchor && (
+              <p className="mt-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+                <CheckCircle2 className="mr-0.5 inline h-3 w-3" />
+                按首次打卡 {gestationAnchor.date} 孕{gestationAnchor.week}周推算：{gestation.label}
+                （后端同步校验，允许 ±1 周微调）
               </p>
             )}
             {isPostpartumMode && babyDays != null && (
@@ -455,7 +476,8 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved, initial
 
             {!isBabyMode ? (
               <div className="space-y-3">
-                {momMode && !hasDueDate && (
+                {/* v1.58：无预产期且无锚点时才强制手填；有锚点时预填推算值可微调 */}
+                {momMode && !hasAutoBasis && (
                   <div>
                     <label className="text-xs text-gray-500 dark:text-gray-400">孕周 (1~42) *</label>
                     <input
@@ -464,6 +486,27 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved, initial
                       max={42}
                       className="input"
                       placeholder="例如 24"
+                      value={manualWeek}
+                      onChange={(e) => setManualWeek(e.target.value)}
+                      required
+                    />
+                  </div>
+                )}
+                {momMode && !hasDueDate && gestationAnchor && (
+                  <div>
+                    <label className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                      <span>孕周 (推算已预填，可 ±1 周微调) *</span>
+                      {gestation && (
+                        <span className="text-[11px] font-medium text-brand-600 dark:text-brand-400">
+                          {gestation.label}
+                        </span>
+                      )}
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={42}
+                      className="input"
                       value={manualWeek}
                       onChange={(e) => setManualWeek(e.target.value)}
                       required

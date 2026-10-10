@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Scale, CheckCircle2, ArrowUpRight, ArrowDownRight, ChevronUp, ChevronDown } from "lucide-react";
+import { Scale, CheckCircle2, ArrowUpRight, ArrowDownRight, ChevronUp, ChevronDown, FileText } from "lucide-react";
 import { healthApi } from "@/api/services";
+import { extractGestationAnchor, gestationLabel } from "@/utils/gestation";
 import type { BmiAnalysisInput, BmiAnalysisResult, BmiTimeSeriesRecord, SameDayConflictPayload } from "@/types/health";
 import BmiFormCard from "./BmiFormCard";
 import BmiTimeSeriesBoard from "./BmiTimeSeriesBoard";
@@ -125,6 +126,9 @@ export default function BmiAnalysisView() {
     return sorted[sorted.length - 1] ?? null;
   }, [timeseries]);
 
+  // v1.58：首次孕期打卡锚点（无预产期时孕周自动推算 孕x周x天）
+  const gestationAnchor = useMemo(() => extractGestationAnchor(timeseries), [timeseries]);
+
   const bmiStatus = useMemo(() => {
     if (!latestRecord || !latestRecord.height) return null;
     const h = latestRecord.height / 100;
@@ -163,16 +167,7 @@ export default function BmiAnalysisView() {
           <div className="flex items-center gap-2">
             {/* v1.57：导出 A4 评估报告（打印 / PDF 下载，动态分包不影响首屏） */}
             <HealthReportExport records={timeseries} result={result} />
-            {result && (
-              <button
-                onClick={() => setReportCollapsed((c) => !c)}
-                className="btn-secondary gap-1.5 text-xs shadow-2xs"
-                title={reportCollapsed ? "展开下方分析报告区块（医学预警/指标概览/曲线/食谱）" : "收起下方分析报告区块，数据不丢失可随时展开"}
-              >
-                {reportCollapsed ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
-                {reportCollapsed ? "展开分析报告" : "收起分析报告"}
-              </button>
-            )}
+            {/* v1.58：展开/收起按钮下移至报告区块自身的标题栏（明确区块归属） */}
           </div>
         </div>
       </div>
@@ -223,12 +218,13 @@ export default function BmiAnalysisView() {
         </div>
       </div>
 
-      {/* 卡片 1: 测量录入与按天打卡（v1.56：基线连续预填） */}
+      {/* 卡片 1: 测量录入与按天打卡（v1.56 基线连续预填；v1.58 孕周锚点自动推算） */}
       <BmiFormCard
         onSubmit={handleAnalyze}
         loading={loading}
         initialHeight={latestRecord?.height ?? null}
         initialPreWeight={latestRecord?.pre_weight ?? null}
+        gestationAnchor={gestationAnchor}
       />
 
       {/* 卡片 2: 多维度时序图表看板（趋势折线 / 增量柱状 + 时间跨度筛选） */}
@@ -243,11 +239,38 @@ export default function BmiAnalysisView() {
         deletingId={deletingId}
       />
 
-      {/* 卡片 4: 医学预警与 AI 双通道食谱方案（v1.57 可逆折叠：收起仅隐藏区块，result 数据保留） */}
-      {result && evalData && !reportCollapsed && (
-        <div className="space-y-6">
-          {/* 4.1 医学异常预警 Banner */}
-          <MedicalAlertBanner alerts={result.alerts || []} />
+      {/* 卡片 4: 本次分析报告（v1.58：折叠按钮随报告区块标题栏——明确区块归属；收起仅隐藏内容，result 数据保留可反复切换） */}
+      {result && evalData && (
+        <div className="card overflow-hidden">
+          {/* 报告标题栏：标题 + 评估摘要 + 折叠开关 */}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-orange-100/60 bg-gradient-to-r from-orange-50/70 to-transparent px-4 py-3 dark:border-gray-800 dark:from-gray-900/60">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-950/60 dark:text-brand-400">
+                <FileText className="h-4 w-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-gray-800 dark:text-gray-100">本次分析报告</h3>
+                <p className="text-[11px] text-gray-400">
+                  {`评估摘要：${evalData.stage_type === "pregnancy" ? gestationLabel(evalData.gestational_week, latestRecord?.gestational_days ?? null) : evalData.stage_type === "postpartum" ? `产后${evalData.postpartum_months ?? ""}个月` : "非孕期"} · 实际增重 ${evalData.actual_gain > 0 ? "+" : ""}${evalData.actual_gain}kg（${evalData.gain_status_label || "—"}）`}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setReportCollapsed((c) => !c)}
+              className="btn-secondary shrink-0 gap-1 text-xs"
+              title={reportCollapsed ? "展开报告内容（医学预警/指标概览/曲线/食谱/运动关怀）" : "收起报告内容，数据保留可随时展开"}
+            >
+              {reportCollapsed ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
+              {reportCollapsed ? "展开报告内容" : "收起报告内容"}
+            </button>
+          </div>
+
+          {/* 报告内容（折叠时隐藏，数据保留） */}
+          {!reportCollapsed && (
+            <div className="space-y-6 p-4">
+              {/* 4.1 医学异常预警 Banner */}
+              <MedicalAlertBanner alerts={result.alerts || []} />
 
           {/* 4.2 核心指标概览看板 */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -275,7 +298,7 @@ export default function BmiAnalysisView() {
 
             <div className="card space-y-1 p-4">
               <span className="text-xs text-gray-400">
-                {evalData.stage_type === "postpartum" ? "产后滞留体重" : `当前孕${evalData.gestational_week}周适宜区间`}
+                {evalData.stage_type === "postpartum" ? "产后滞留体重" : `当前${gestationLabel(evalData.gestational_week)}适宜区间`}
               </span>
               <div className="flex items-baseline gap-1">
                 <span className="text-2xl font-extrabold text-gray-800 dark:text-gray-100">
@@ -340,16 +363,8 @@ export default function BmiAnalysisView() {
 
           {/* 4.5 运动与心理关怀卡片 */}
           <LifestyleCareCard advice={result.lifestyle_advice} />
-        </div>
-      )}
-
-      {/* v1.57 折叠态提示条：报告已保留，可随时展开 */}
-      {result && evalData && reportCollapsed && (
-        <div className="card flex items-center justify-between gap-3 p-4 text-xs text-gray-400">
-          <span>本次分析报告已折叠（医学预警 · 指标概览 · WS/T 曲线 · 食谱方案 · 运动心理关怀），数据保留至下次分析。</span>
-          <button type="button" onClick={() => setReportCollapsed(false)} className="btn-secondary shrink-0 gap-1 text-xs">
-            <ChevronDown className="h-3.5 w-3.5" /> 展开分析报告
-          </button>
+            </div>
+          )}
         </div>
       )}
 
