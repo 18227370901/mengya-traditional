@@ -137,10 +137,13 @@ class MedicalCalculator:
         std = standard_map[category_key]
         actual_gain = round(current_weight_kg - pre_pregnancy_weight_kg, 2)
 
-        if stage_type == "postpartum" or (postpartum_months is not None and postpartum_months >= 0):
+        if stage_type in ("postpartum", "general") or (postpartum_months is not None and postpartum_months >= 0):
             months = postpartum_months or 0
             ppwr = actual_gain
-            if months <= 6:
+            if stage_type == "general":
+                # v1.56：非孕期（备孕/日常）体重管理——无孕周增重通道，以 BMI 与较基线差值评估
+                summary = "非孕期体重管理阶段：保持均衡膳食与规律运动，将体重维持在健康 BMI 区间（18.5 ~ 23.9）内。"
+            elif months <= 6:
                 summary = f"产后 {months} 个月处于母乳黄金期，每日基础热量推荐增加约 500 kcal，忌盲目过度断食。"
             else:
                 summary = f"产后 {months} 个月处于体形恢复期，建议将体重平稳过渡恢复至孕前基线区间。"
@@ -324,7 +327,11 @@ class MedicalCalculator:
             "above": "增重超标（超出推荐上限）",
         }
         evaluation["gain_status_label"] = status_map.get(gain_status, "正常范围")
-        evaluation["stage_type"] = "postpartum" if stage_type == "postpartum" else "pregnancy"
+        # v1.56：阶段归一化（pregnancy / postpartum / general 非孕期）
+        evaluation["stage_type"] = {
+            "postpartum": "postpartum",
+            "general": "general",
+        }.get(stage_type, "pregnancy")
         evaluation["is_twins"] = bool(is_twins)
 
         alerts = cls.detect_medical_alerts(

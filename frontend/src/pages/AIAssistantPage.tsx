@@ -19,7 +19,6 @@ import { useAuthStore } from "@/store/authStore";
 import { useChatStore, type ChatSource } from "@/store/chatStore";
 import type { ChatSessionSummary } from "@/types";
 import CopyButton from "@/components/CopyButton";
-import SearXNGConfigModal from "@/components/health/SearXNGConfigModal";
 
 interface ChatData {
   response: string;
@@ -67,7 +66,6 @@ export default function AIAssistantPage() {
   const [renameValue, setRenameValue] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [toast, setToast] = useState<{ msg: string; type: "success" | "error" }>({ msg: "", type: "success" });
-  const [searxngModalOpen, setSearxngModalOpen] = useState(false);
   const [expandedSourceMsg, setExpandedSourceMsg] = useState<number | null>(null);
   const { user } = useAuthStore();
   const isAdmin = !!user?.is_staff;
@@ -298,14 +296,7 @@ export default function AIAssistantPage() {
               </p>
             </div>
           </div>
-          {isAdmin && (
-            <button
-              className="btn-secondary flex items-center gap-1.5 text-xs shadow-sm"
-              onClick={() => setSearxngModalOpen(true)}
-            >
-              <Globe className="h-3.5 w-3.5" /> SearXNG 引擎配置
-            </button>
-          )}
+          {/* v1.56：SearXNG 引擎配置入口已统一收敛至「AI 助手配置」页 */}
         </div>
 
         {/* 消息区 */}
@@ -341,7 +332,7 @@ export default function AIAssistantPage() {
                 }`}
               >
                 {m.content}
-                {m.role === "ai" && m.search_status && m.search_status !== "skipped" && (
+{m.role === "ai" && m.search_status && m.search_status !== "skipped" && (
                   <div className="mt-2 border-t border-gray-200/70 pt-1.5 dark:border-gray-700/70">
                     {m.search_status === "searxng" ? (
                       <button
@@ -356,14 +347,17 @@ export default function AIAssistantPage() {
                         )}
                       </button>
                     ) : m.search_status === "searxng_empty" ? (
-                      <span className="flex items-center gap-1 text-[11px] text-amber-500 dark:text-amber-400" title="SearXNG 实例已连通，但其上游引擎未返回结果（常见于出口 IP 被搜索引擎限流/验证码封禁），本次回答基于 AI 知识库">
+                      <span
+                        className="flex items-center gap-1 text-[11px] text-amber-500 dark:text-amber-400"
+                        title="SearXNG 实例已连通，但其上游引擎未返回结果（常见于出口 IP 被搜索引擎限流/验证码封禁），本次回答基于 AI 知识库"
+                      >
                         <Globe className="h-3 w-3" />
-                        SearXNG 已连接但实例引擎无结果，回答基于 AI 知识库{isAdmin ? "（可在 SearXNG 配置中排查）" : ""}
+                        SearXNG 已连接但实例引擎无结果，回答基于 AI 知识库{isAdmin ? "（可在 AI 助手配置页排查）" : ""}
                       </span>
                     ) : m.search_status === "unavailable" ? (
                       <span className="flex items-center gap-1 text-[11px] text-gray-400">
                         <Globe className="h-3 w-3" />
-                        未接入实时检索，回答基于 AI 知识库{isAdmin ? "（可配置 SearXNG）" : ""}
+                        未接入实时检索，回答基于 AI 知识库{isAdmin ? "（可在 AI 助手配置页排查）" : ""}
                       </span>
                     ) : (
                       <button
@@ -372,7 +366,7 @@ export default function AIAssistantPage() {
                         onClick={() => setExpandedSourceMsg(expandedSourceMsg === i ? null : i)}
                       >
                         <Globe className="h-3 w-3" />
-                        公网实时检索 · {m.sources?.length || 0} 条来源
+                        公网实时检索{m.search_status?.startsWith("fallback:") ? `（${m.search_status.split(":")[1]}）` : ""} · {m.sources?.length || 0} 条来源
                       </button>
                     )}
                     {expandedSourceMsg === i && m.sources && m.sources.length > 0 && (
@@ -475,12 +469,7 @@ export default function AIAssistantPage() {
         </div>
       )}
 
-      {/* 管理员 SearXNG 私有化搜索引擎配置弹窗（v1.55：AI 助手实时检索联动） */}
-      <SearXNGConfigModal
-        isOpen={searxngModalOpen}
-        onClose={() => setSearxngModalOpen(false)}
-        onSaved={() => showToast("SearXNG 引擎配置已更新并同步写入 .env")}
-      />
+      {/* v1.56：SearXNG 引擎配置入口已统一收敛至「AI 助手配置」页 */}
 
       {/* Toast 提示 */}
       {toast.msg && (

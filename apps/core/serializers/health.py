@@ -38,7 +38,7 @@ class BmiAnalysisInputSerializer(serializers.Serializer):
         },
     )
     stage_type = serializers.ChoiceField(
-        choices=["pregnancy", "postpartum"],
+        choices=["pregnancy", "postpartum", "general"],
         default="pregnancy",
     )
     gestational_week = serializers.IntegerField(
@@ -81,5 +81,9 @@ class BmiAnalysisInputSerializer(serializers.Serializer):
         if stage == "postpartum":
             if attrs.get("postpartum_months") is None:
                 attrs["postpartum_months"] = 1
+        elif stage == "general":
+            # v1.56：非孕期（备孕/日常）不携带产后月龄与孕周
+            attrs["postpartum_months"] = None
+            attrs["gestational_week"] = None
         # 孕周/身高/孕前体重的补齐与校验由视图层统一执行（孕周引擎 + 基线继承）
         return attrs

@@ -3,6 +3,7 @@ import {
   HeartPulse,
   Baby,
   PersonStanding,
+  Activity,
   Calendar,
   Scale,
   Ruler,
@@ -21,13 +22,15 @@ import type { BmiAnalysisInput, HealthRecord } from "@/types";
  * 档案智能默认 + 孕周/月龄自动推算，数据自动归档至孕产记录/BMI时序/生长曲线/日历。
  */
 
-type CheckInMode = "mom_pregnancy" | "mom_postpartum" | "baby";
+type CheckInMode = "mom_pregnancy" | "mom_postpartum" | "mom_general" | "baby";
 
 interface UnifiedHealthCheckInProps {
   isOpen: boolean;
   onClose: () => void;
   /** 保存成功后回调，参数为归档去向提示文案 */
   onSaved: (archiveHint: string) => void;
+  /** v1.56：预填测量日期（健康时间轴点击日期补录入口） */
+  initialDate?: string;
 }
 
 /** 基于预产期的 280 天医学模型自动推算孕周（与后端 gestation_engine 保持一致） */
@@ -49,7 +52,7 @@ function daysBetween(fromDate: string, toDate: string): number | null {
   return Math.max(0, Math.floor((to.getTime() - from.getTime()) / 86400000));
 }
 
-export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved }: UnifiedHealthCheckInProps) {
+export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved, initialDate }: UnifiedHealthCheckInProps) {
   const { user } = useAuthStore();
   const hasDueDate = !!user?.due_date;
   const hasBabyBirthday = !!user?.baby_birthday;
@@ -66,7 +69,7 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved }: Unifi
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
-  // 档案智能默认：孕期用户默认孕期打卡；已出生宝宝档案默认宝宝测量；均未设置默认孕期
+  // 档案智能默认：孕期用户默认孕期打卡；已出生宝宝档案默认宝宝测量；其余（备孕/日常）默认非孕期
   useEffect(() => {
     if (!isOpen) return;
     setErrorMsg("");
@@ -75,9 +78,9 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved }: Unifi
     } else if (user?.baby_birthday) {
       setMode("baby");
     } else {
-      setMode("mom_pregnancy");
+      setMode("mom_general");
     }
-    setRecordDate(new Date().toISOString().slice(0, 10));
+    setRecordDate(initialDate || new Date().toISOString().slice(0, 10));
     setWeight("");
     setWaist("");
     setManualWeek("");
@@ -85,7 +88,7 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved }: Unifi
     setBabyWeight("");
     setBabyHead("");
     setNote("");
-  }, [isOpen, user?.is_pregnant, user?.baby_birthday]);
+  }, [isOpen, user?.is_pregnant, user?.baby_birthday, initialDate]);
 
   // 孕周自动推算（有预产期时）
   const autoWeek = useMemo(() => {
@@ -110,6 +113,7 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved }: Unifi
 
   const isBabyMode = mode === "baby";
   const isPostpartumMode = mode === "mom_postpartum";
+  const isGeneralMode = mode === "mom_general";
   const momMode = mode === "mom_pregnancy";
 
   const MODE_OPTIONS: Array<{
@@ -129,6 +133,12 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved }: Unifi
       label: "我 · 产后恢复",
       desc: hasBabyBirthday ? "产后天数按宝宝生日自动推算" : "记录产后体重恢复走势",
       icon: HeartPulse,
+    },
+    {
+      key: "mom_general",
+      label: "我 · 非孕期/备孕",
+      desc: "备孕与日常体重管理，BMI 按标准区间评估",
+      icon: Activity,
     },
     {
       key: "baby",
@@ -177,9 +187,9 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved }: Unifi
         await healthApi.create(babyPayload);
         onSaved("宝宝测量已归档：生长曲线 · 日历总览");
       } else {
-        // ===== 妈妈打卡（孕期/产后）→ BMI 分析接口（自动孕周校验 + 基线继承 + WS/T 评估）=====
+        // ===== 妈妈打卡（孕期/产后/非孕期）→ BMI 分析接口（自动孕周校验 + 基线继承 + 评估）=====
         const payload: BmiAnalysisInput = {
-          stage_type: isPostpartumMode ? "postpartum" : "pregnancy",
+          stage_type: isPostpartumMode ? "postpartum" : isGeneralMode ? "general" : "pregnancy",
           record_date: recordDate,
           current_weight_kg: w,
           waist_circumference_cm: waist ? Number(waist) : undefined,
@@ -188,13 +198,15 @@ export default function UnifiedHealthCheckIn({ isOpen, onClose, onSaved }: Unifi
         };
         if (momMode) {
           payload.gestational_week = hasDueDate ? (autoWeek ?? undefined) : Number(manualWeek);
-        } else {
+        } else if (isPostpartumMode) {
           payload.postpartum_months = babyDays != null ? Math.max(0, Math.floor(babyDays / 30.44)) : 1;
         }
         await healthApi.analyzeBmi(payload);
         onSaved(
           isPostpartumMode
             ? "产后打卡已归档：孕产记录 · BMI 时序 · 日历"
+            : isGeneralMode
+            ? "非孕期打卡已归档：孕产记录 · BMI 时序 · 日历"
             : "孕期打卡已归档：孕产记录 · BMI 时序与医学评估 · 日历"
         );
       }

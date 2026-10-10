@@ -1,6 +1,7 @@
 // 孕产妇体重/BMI 分析与个性化方案类型定义 (WS/T 801-2022)
 
-export type PregnancyStage = "pregnancy" | "postpartum";
+/** v1.56：pregnancy 孕期 / postpartum 产后 / general 非孕期（备孕·日常） */
+export type PregnancyStage = "pregnancy" | "postpartum" | "general";
 
 export interface BmiAnalysisInput {
   record_date?: string;
@@ -28,8 +29,8 @@ export interface BmiTimeSeriesRecord {
   id: number;
   record_date: string;
   record_type: string;
-  /** 妈妈记录阶段：pregnancy 孕期 / postpartum 产后（v1.55 语义统一） */
-  stage?: "pregnancy" | "postpartum";
+  /** 妈妈记录阶段：pregnancy 孕期 / postpartum 产后 / general 非孕期（v1.55/1.56 语义统一） */
+  stage?: "pregnancy" | "postpartum" | "general";
   gestational_week?: number | null;
   height?: number | null;
   weight: number;

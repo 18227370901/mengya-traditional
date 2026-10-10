@@ -2166,7 +2166,8 @@ class HealthBmiAnalysisView(APIView):
         created_record_id = None
         # 语义统一：妈妈记录一律 prenatal_exam，产后打卡以 exam_items.stage 标记（不再写入 growth_measurement）
         rec_type = "prenatal_exam"
-        stage_mark = "postpartum" if stage_type == "postpartum" else "pregnancy"
+        # v1.56：阶段语义归一化 pregnancy / postpartum / general（非孕期备孕·日常）
+        stage_mark = {"postpartum": "postpartum", "general": "general"}.get(stage_type, "pregnancy")
         exam_items = {
             "stage": stage_mark,
             "waist_circumference": data.get("waist_circumference_cm"),
@@ -2187,7 +2188,7 @@ class HealthBmiAnalysisView(APIView):
                 weight=current_weight,
                 exam_items=exam_items,
                 note=(
-                    f"{'产后' if stage_mark == 'postpartum' else f'孕{gestational_week}周'}打卡："
+                    f"{'非孕期' if stage_mark == 'general' else '产后' if stage_mark == 'postpartum' else f'孕{gestational_week}周'}打卡："
                     f"孕前BMI {evaluation['bmi']} ({evaluation['category_label']}), "
                     f"累计增重 {evaluation['actual_gain']}kg ({evaluation.get('gain_status_label', '')})"
                 ),

@@ -6,6 +6,9 @@ import type { BmiAnalysisInput, PregnancyStage } from "@/types/health";
 interface BmiFormCardProps {
   onSubmit: (data: BmiAnalysisInput) => void;
   loading: boolean;
+  /** v1.56：最近一次打卡基线预填（身高/孕前体重连续预填，减少重复录入） */
+  initialHeight?: number | null;
+  initialPreWeight?: number | null;
 }
 
 const MEDICAL_HISTORY_OPTIONS = [
@@ -35,19 +38,24 @@ function autoPostpartumMonths(babyBirthday: string, recordDate: string): number 
   return Math.max(0, Math.floor((rec.getTime() - birth.getTime()) / (30.44 * 86400000)));
 }
 
-export default function BmiFormCard({ onSubmit, loading }: BmiFormCardProps) {
+export default function BmiFormCard({ onSubmit, loading, initialHeight, initialPreWeight }: BmiFormCardProps) {
   const { user } = useAuthStore();
   const hasDueDate = !!user?.due_date;
   const hasBabyBirthday = !!user?.baby_birthday;
 
   const [recordDate, setRecordDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
-  const [height, setHeight] = useState<string>("");
-  const [preWeight, setPreWeight] = useState<string>("");
+  // v1.56：基线连续预填——最近一次打卡的身高/孕前体重自动带入（仍可修改）
+  const [height, setHeight] = useState<string>(initialHeight ? String(initialHeight) : "");
+  const [preWeight, setPreWeight] = useState<string>(initialPreWeight ? String(initialPreWeight) : "");
   const [curWeight, setCurWeight] = useState<string>("");
   const [waistCircumference, setWaistCircumference] = useState<string>("");
-  // v1.55 档案联动：孕期用户默认孕期阶段；已出生宝宝档案默认产后恢复
+  // v1.55/1.56 档案联动：孕期用户默认孕期；已出生宝宝档案默认产后；其余默认非孕期
   const [stageType, setStageType] = useState<PregnancyStage>(() =>
-    user && !user.is_pregnant && user.baby_birthday ? "postpartum" : "pregnancy"
+    user && !user.is_pregnant && user.baby_birthday
+      ? "postpartum"
+      : user && !user.is_pregnant && !user.baby_birthday
+      ? "general"
+      : "pregnancy"
   );
   const [gestationalWeek, setGestationalWeek] = useState<string>("");
   const [postpartumMonths, setPostpartumMonths] = useState<string>("");
@@ -146,10 +154,11 @@ export default function BmiFormCard({ onSubmit, loading }: BmiFormCardProps) {
         return;
       }
       payload.gestational_week = gwNum;
-    } else {
+    } else if (stageType === "postpartum") {
       const pmNum = parseInt(postpartumMonths, 10);
       payload.postpartum_months = isNaN(pmNum) ? 1 : pmNum;
     }
+    // v1.56：general 非孕期阶段无需孕周/产后月龄
 
     onSubmit(payload);
   };
@@ -226,7 +235,18 @@ export default function BmiFormCard({ onSubmit, loading }: BmiFormCardProps) {
                     : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300"
                 }`}
               >
-                产后母乳/恢复期
+                产后恢复期
+              </button>
+              <button
+                type="button"
+                onClick={() => setStageType("general")}
+                className={`flex-1 rounded-xl py-2 text-xs font-semibold transition-all ${
+                  stageType === "general"
+                    ? "bg-brand-500 text-white shadow-xs"
+                    : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300"
+                }`}
+              >
+                非孕期/备孕
               </button>
             </div>
           </div>
@@ -257,7 +277,7 @@ export default function BmiFormCard({ onSubmit, loading }: BmiFormCardProps) {
                   </p>
                 )}
               </>
-            ) : (
+            ) : stageType === "postpartum" ? (
               <>
                 <label className="label">
                   产后月龄 (0 ~ 36 个月) {hasBabyBirthday ? "· 按宝宝生日自动" : "*"}
@@ -276,6 +296,11 @@ export default function BmiFormCard({ onSubmit, loading }: BmiFormCardProps) {
                   <span className="text-xs text-gray-400">个月</span>
                 </div>
               </>
+            ) : (
+              <div className="rounded-xl bg-brand-50/60 p-3 text-[11px] leading-relaxed text-brand-700 dark:bg-brand-950/40 dark:text-brand-300">
+                非孕期（备孕/日常）体重管理：无需孕周与产后月龄，评估按标准 BMI 区间
+                (18.5 ~ 23.9) 进行，走势看板自动切换为非孕期视图。
+              </div>
             )}
           </div>
         </div>

@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { Scale, CheckCircle2, ArrowUpRight, ArrowDownRight, RefreshCw, Globe } from "lucide-react";
-import { useAuthStore } from "@/store/authStore";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Scale, CheckCircle2, ArrowUpRight, ArrowDownRight, RefreshCw } from "lucide-react";
 import { healthApi } from "@/api/services";
 import type { BmiAnalysisInput, BmiAnalysisResult, BmiTimeSeriesRecord } from "@/types/health";
 import BmiFormCard from "./BmiFormCard";
@@ -10,18 +9,14 @@ import MedicalAlertBanner from "./MedicalAlertBanner";
 import WeightGainChart from "./WeightGainChart";
 import DietPlanCard from "./DietPlanCard";
 import LifestyleCareCard from "./LifestyleCareCard";
-import SearXNGConfigModal from "./SearXNGConfigModal";
 
 export default function BmiAnalysisView() {
-  const { user } = useAuthStore();
   const [loading, setLoading] = useState<boolean>(false);
   const [result, setResult] = useState<BmiAnalysisResult | null>(null);
   const [toast, setToast] = useState<string>("");
   const [timeseries, setTimeseries] = useState<BmiTimeSeriesRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState<boolean>(true);
   const [deletingId, setDeletingId] = useState<number | null>(null);
-  const [searxngModalOpen, setSearxngModalOpen] = useState<boolean>(false);
-  const isAdmin = !!user?.is_staff;
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -91,6 +86,29 @@ export default function BmiAnalysisView() {
   const isGainNormal = evalData?.gain_status === "normal";
   const isGainBelow = evalData?.gain_status === "below";
 
+  // ===== v1.56：BMI 状态卡数据源（标准区间 + 当前测算 BMI + 孕前基线）=====
+  const latestRecord = useMemo(() => {
+    if (!timeseries.length) return null;
+    const sorted = [...timeseries].sort((a, b) => (a.record_date < b.record_date ? -1 : 1));
+    return sorted[sorted.length - 1] ?? null;
+  }, [timeseries]);
+
+  const bmiStatus = useMemo(() => {
+    if (!latestRecord || !latestRecord.height) return null;
+    const h = latestRecord.height / 100;
+    const currentBmi = latestRecord.weight && h > 0 ? +(latestRecord.weight / (h * h)).toFixed(1) : null;
+    const preBmi = latestRecord.bmi ?? null;
+    const cat = (b: number) =>
+      b < 18.5
+        ? { label: "偏瘦", cls: "text-amber-500 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-400" }
+        : b < 24
+        ? { label: "正常", cls: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-400" }
+        : b < 28
+        ? { label: "超重", cls: "text-amber-500 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-400" }
+        : { label: "肥胖", cls: "text-red-500 bg-red-50 dark:bg-red-950/40 dark:text-red-400" };
+    return { currentBmi, preBmi, currentCat: currentBmi ? cat(currentBmi) : null, preCat: preBmi ? cat(preBmi) : null };
+  }, [latestRecord]);
+
   return (
     <div className="space-y-6">
       {/* 模块头部说明卡 */}
@@ -111,15 +129,6 @@ export default function BmiAnalysisView() {
           </div>
 
           <div className="flex items-center gap-2">
-            {isAdmin && (
-              <button
-                onClick={() => setSearxngModalOpen(true)}
-                className="btn-secondary gap-1.5 text-xs shadow-2xs"
-              >
-                <Globe className="h-3.5 w-3.5" /> SearXNG 引擎配置
-              </button>
-            )}
-
             {result && (
               <button
                 onClick={() => setResult(null)}
@@ -132,8 +141,59 @@ export default function BmiAnalysisView() {
         </div>
       </div>
 
-      {/* 卡片 1: 测量录入与按天打卡 */}
-      <BmiFormCard onSubmit={handleAnalyze} loading={loading} />
+      {/* v1.56：BMI 状态卡——标准区间 / 当前测算 BMI / 孕前基线（三个时段通用） */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="card space-y-1 p-4">
+          <span className="text-xs text-gray-400">标准 BMI 区间（中国成人）</span>
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-xl font-extrabold text-gray-800 dark:text-gray-100">18.5 ~ 23.9</span>
+            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400">
+              正常
+            </span>
+          </div>
+          <p className="text-[11px] text-gray-400">低于 18.5 偏瘦 · 24.0 ~ 27.9 超重 · ≥ 28.0 肥胖</p>
+        </div>
+
+        <div className="card space-y-1 p-4">
+          <span className="text-xs text-gray-400">当前测算 BMI（按最新打卡）</span>
+          {bmiStatus?.currentBmi ? (
+            <div className="flex items-baseline gap-2">
+              <span className="text-xl font-extrabold text-brand-600 dark:text-brand-400">
+                {bmiStatus.currentBmi}
+              </span>
+              <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${bmiStatus.currentCat?.cls}`}>
+                {bmiStatus.currentCat?.label}
+              </span>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-300 dark:text-gray-600">完成一次打卡后展示</p>
+          )}
+          <p className="text-[11px] text-gray-400">按最新实测体重与身高实时测算</p>
+        </div>
+
+        <div className="card space-y-1 p-4">
+          <span className="text-xs text-gray-400">孕前 BMI 基线</span>
+          {bmiStatus?.preBmi ? (
+            <div className="flex items-baseline gap-2">
+              <span className="text-xl font-extrabold text-gray-800 dark:text-gray-100">{bmiStatus.preBmi}</span>
+              <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${bmiStatus.preCat?.cls}`}>
+                {bmiStatus.preCat?.label}
+              </span>
+            </div>
+          ) : (
+            <p className="text-xs text-gray-300 dark:text-gray-500">首次打卡自动初始化</p>
+          )}
+          <p className="text-[11px] text-gray-400">评估体重增长与目标设定的基准</p>
+        </div>
+      </div>
+
+      {/* 卡片 1: 测量录入与按天打卡（v1.56：基线连续预填） */}
+      <BmiFormCard
+        onSubmit={handleAnalyze}
+        loading={loading}
+        initialHeight={latestRecord?.height ?? null}
+        initialPreWeight={latestRecord?.pre_weight ?? null}
+      />
 
       {/* 卡片 2: 多维度时序图表看板（趋势折线 / 增量柱状 + 时间跨度筛选） */}
       <BmiTimeSeriesBoard records={timeseries} loading={historyLoading} />
@@ -246,12 +306,7 @@ export default function BmiAnalysisView() {
         </div>
       )}
 
-      {/* 管理员 SearXNG 私有化搜索引擎配置弹窗 */}
-      <SearXNGConfigModal
-        isOpen={searxngModalOpen}
-        onClose={() => setSearxngModalOpen(false)}
-        onSaved={() => showToast("SearXNG 引擎配置已更新并同步写入 .env")}
-      />
+      {/* 管理员 SearXNG 配置已移至「AI 助手配置」页（v1.56） */}
 
       {/* Toast 提示 */}
       {toast && (

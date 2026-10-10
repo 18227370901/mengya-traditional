@@ -33,10 +33,12 @@ const PLANNED_VACCINES = [
 interface VaccineCalendarProps {
   records: HealthRecord[];
   onChanged?: () => void;
+  /** v1.56 P1-A：宝宝生日（用于推算下一针建议） */
+  babyBirthday?: string;
 }
 
 /** 疫苗日历：按月展示已接种/待接种，支持编辑、删除、年份切换 */
-export default function VaccineCalendar({ records, onChanged }: VaccineCalendarProps) {
+export default function VaccineCalendar({ records, onChanged, babyBirthday }: VaccineCalendarProps) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
@@ -71,6 +73,30 @@ export default function VaccineCalendar({ records, onChanged }: VaccineCalendarP
 
   // 已接种过的疫苗名称集合（全部时间）
   const doneNames = new Set(vaccineRecords.map((r) => r.vaccine_name));
+
+  // v1.56 P1-A：下一针建议——按宝宝月龄取第一个未完成的规划剂次
+  const nextVaccine = useMemo(() => {
+    if (!babyBirthday) return null;
+    const birth = new Date(babyBirthday);
+    if (Number.isNaN(birth.getTime())) return null;
+    const monthAge = Math.max(0, (Date.now() - birth.getTime()) / (30.44 * 86400000));
+    // 按规划顺序取第一个未接种剂次
+    const pending = PLANNED_VACCINES.filter((v) => !doneNames.has(v.name));
+    if (pending.length === 0) return null;
+    const next = pending[0];
+    // 解析月龄提示（出生时=0，X月龄=X，X岁=X*12）
+    const ageNum = (age: string): number => {
+      if (age.includes("出生")) return 0;
+      if (age.includes("岁")) return parseInt(age, 10) * 12;
+      return parseInt(age, 10) || 0;
+    };
+    const dueMonths = ageNum(next.age);
+    return {
+      ...next,
+      dueAge: Math.round(monthAge), // 宝宝当前月龄（渲染用）
+      overdue: monthAge >= dueMonths + 1, // 已到建议月龄且超过 1 个月视为“已到期”
+    };
+  }, [babyBirthday, doneNames]);
 
   const resetForm = () => {
     setVaccineName("");
@@ -235,6 +261,26 @@ export default function VaccineCalendar({ records, onChanged }: VaccineCalendarP
         >
           <Plus className="h-4 w-4" /> 添加接种记录
         </button>
+      )}
+
+      {/* v1.56 P1-A：下一针接种建议 */}
+      {nextVaccine && (
+        <div
+          className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-sm ${
+            nextVaccine.overdue
+              ? "border-red-200 bg-red-50/60 text-red-700 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-300"
+              : "border-brand-200 bg-brand-50/60 text-brand-700 dark:border-brand-900/50 dark:bg-brand-950/20 dark:text-brand-300"
+          }`}
+        >
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          <div className="min-w-0">
+            <span className="font-semibold">下一针：{nextVaccine.name}</span>
+            <span className="ml-2 text-xs opacity-80">建议 {nextVaccine.age} 接种 · 宝宝当前 {nextVaccine.dueAge >= 36 ? `${Math.floor(nextVaccine.dueAge / 12)}岁` : `${nextVaccine.dueAge}个月`}</span>
+            {nextVaccine.overdue && (
+              <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs dark:bg-red-900/40">已到接种时间，请尽快安排</span>
+            )}
+          </div>
+        </div>
       )}
 
       {/* 当前月份已接种记录 */}

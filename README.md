@@ -773,6 +773,45 @@ mengya-local/
 - **`searxng_empty` 精确状态**：`search_for_ai()` 区分「实例不可达」（`unavailable`）与「实例可达但上游引擎被 CAPTCHA/限流封禁返回 0 条结果」（`searxng_empty`），兜底分支不再覆盖该诊断状态；AI 助手页对应新增橙色警示徽章「SearXNG 已连接但实例引擎无结果，回答基于 AI 知识库」；
 - **连通性测试两跳诊断**：`test_connection()` 升级为「通用检索探针（验证引擎可用性）+ 权威健康白名单通道探针」两跳测试，新增 `warning` 状态（实例连通但通用检索 0 条）、`health_count` 与 `unresponsive_engines` 字段；配置弹窗以橙色样式展示失效引擎清单与修复指引（检查实例引擎状态 / 更换出口 IP / 配置代理 / 指定可用引擎），HTTP 403 时提示实例需开启 JSON 输出格式。
 
+### 15. 健康中心信息架构重构与搜索引擎配置体系 (v1.56)
+
+#### 15.1 搜索引擎三级降级（SearXNG 不可用不影响用户）
+- **公网兜底开关默认开启**（`AI_SEARCH_FALLBACK_ENABLED=True`，settings / `.env` / `.env.example` 三方同步）：SearXNG 无结果或不可达时自动回退平台内置多公网引擎管线（Bing 等直连）；
+- **三级降级链路**：① SearXNG 有结果 → 绿色「SearXNG 实时检索」；② SearXNG 无结果/不可用 → 蓝色「公网实时检索（Bing）」——**徽章明确显示当前实际使用的搜索引擎**；③ 全部失败 → 灰色「未接入实时检索」；AI 回答末尾同步追加「（信息来源：当前搜索引擎）」；
+- 管理员仍可在配置面板随时关闭兜底（恢复"仅私有 SearXNG"行为）。
+
+#### 15.2 搜索引擎配置入口迁移（问题1）
+- 配置入口从「健康中心-体重/BMI 分析」页与 AI 对话页**整体收敛至「AI 助手配置」页（`/settings/ai`）**——新增「搜索引擎配置」区块（实例地址/连通状态/公网兜底开关摘要 + 配置面板弹窗），BMI 页与 AI 对话页按钮移除，入口唯一化。
+
+#### 15.3 非孕期（备孕/日常）阶段支持与新增即显（问题2）
+- **新增「非孕期/备孕」阶段**（`stage_type=general`，零迁移复用 `prenatal_exam` + `exam_items.stage="general"`）：统一健康打卡新增「我 · 非孕期/备孕」模式、BMI 表单阶段新增「非孕期/备孕」选项、历史表阶段列显示「非孕期」、医学评估按标准 BMI 区间（18.5~23.9）而非孕周通道；
+- **根因修复**：`index.html` 响应强制 `no-cache`（`serve_spa_index`），根治浏览器缓存旧前端包导致的"新增不显示/无产后选项"（用户看到旧版页面）；
+- 打卡保存后列表/看板/时间轴联动刷新（现有 `onSaved → load` 机制保留并覆盖全部 Tab）。
+
+#### 15.4 BMI 状态卡与非孕期走势看板（问题3）
+- **BMI 状态卡**（三卡）：标准 BMI 区间（18.5~23.9）/ 当前测算 BMI（按最新打卡实时计算 + 偏瘦·正常·超重·肥胖分类徽章）/ 孕前 BMI 基线；
+- **时序看板非孕期视图**：纯非孕期数据自动切换为「体重走势 + BMI 18.5~23.9 标准区间体重参考带（蓝）+ BMI 21 中位虚线」，孕期数据维持 WS/T 801-2022 通道带视图；混合阶段以孕期通道带为主、非孕期点无通道标注。
+
+#### 15.5 健康中心 4-Tab 信息架构重构（问题4）
+| Tab | 名称 | 内容 |
+|---|---|---|
+| ① | 妈妈·孕产档案 | 打卡明细列表（阶段徽章/备注/AI 解读）+ BMI 分析（状态卡/表单/时序看板/历史表/医学评估） |
+| ② | 宝宝·生长档案 | 生长曲线（+ WHO 男童 P50 参考线）+ 测量记录表 |
+| ③ | 宝宝·疫苗计划 | 疫苗日历 + 接种状态 + 免疫规划清单 + 下一针建议（按宝宝月龄） |
+| ④ | 健康时间轴 | 日历总览（按日聚合妈妈+宝宝全部记录），**任意日期可点击补录**（预填日期） |
+
+- 唯一录入入口：页头「健康打卡」弹窗四模式（孕期/产后/非孕期/宝宝），保存后自动路由归档并联动刷新全部 Tab。
+
+#### 15.6 其他优化（问题4 延伸）
+- **连续打卡预填**：BMI 表单身高/孕前体重自动带入最近一次打卡基线（可修改）；
+- **生长曲线 WHO 参考线**：`GrowthChart` 叠加 WHO 0-3 岁男童 P50 虚线（按宝宝月龄插值对齐）；
+- **疫苗下一针建议**：`VaccineCalendar` 按宝宝月龄推荐下一剂次，到期（超 1 个月）红字提醒「尽快安排」；
+- **时间轴补录**：日历任意日期点击打开健康打卡弹窗并预填日期。
+
+#### 15.7 涉及文件清单
+- 后端：`config/urls.py`（`serve_spa_index` no-cache）、`config/settings.py`、`.env`/`.env.example`、`apps/core/views.py`（stage=general 归档）、`apps/core/serializers/health.py`、`apps/core/services/medical_calculator.py`（general 评估分支）；
+- 前端：`frontend/src/pages/HealthPage.tsx`（4-Tab 重构）、`AIConfigPage.tsx`（搜索引擎配置区块）、`AIAssistantPage.tsx`（移除配置入口 + 徽章引擎名）、`frontend/src/components/health/UnifiedHealthCheckIn.tsx`（非孕期模式 + initialDate）、`BmiFormCard.tsx`（非孕期阶段 + 连续预填）、`BmiAnalysisView.tsx`（BMI 状态卡 + 移除配置按钮）、`BmiTimeSeriesBoard.tsx`（非孕期视图）、`BmiHistoryTable.tsx`（阶段列 general）、`GrowthChart.tsx`（WHO 参考线）、`VaccineCalendar.tsx`（下一针建议）、`HealthCalendar.tsx`（全日期可点）、`frontend/src/types/health.ts`（general 类型）。
+
 #### 14.5 涉及文件清单
 - 后端：`apps/core/services/gestation_engine.py`（新增）、`apps/core/services/web_search.py`、`apps/core/services/ai_service.py`、`apps/core/services/searxng_client.py`、`apps/core/views.py`、`apps/core/views_searxng.py`、`apps/core/serializers/__init__.py`、`apps/core/serializers/health.py`、`config/settings.py`、`.env` / `.env.example`；
 - 前端：`frontend/src/components/health/UnifiedHealthCheckIn.tsx`（新增）、`SearXNGConfigModal.tsx`、`BmiFormCard.tsx`、`BmiHistoryTable.tsx`、`BmiTimeSeriesBoard.tsx`、`BmiAnalysisView.tsx`、`frontend/src/pages/HealthPage.tsx`、`frontend/src/pages/AIAssistantPage.tsx`、`frontend/src/store/chatStore.ts`、`frontend/src/types/health.ts`。
