@@ -1,7 +1,7 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from . import views, views_searxng, views_daily_tips
+from . import views, views_searxng, views_daily_tips, views_service_config
 
 router = DefaultRouter()
 router.register(r"mothers", views.MotherViewSet, basename="mother")
@@ -49,6 +49,10 @@ urlpatterns = [
     path("health/bmi-analysis/", views.HealthBmiAnalysisView.as_view(), name="health-bmi-analysis"),
     path("admin/searxng-config/", views_searxng.AdminSearXNGConfigView.as_view(), name="admin-searxng-config"),
     path("admin/searxng-config/test/", views_searxng.AdminSearXNGConfigTestView.as_view(), name="admin-searxng-config-test"),
+    # v1.73 外部接口服务配置（天气/节假日/AI公网搜索引擎管线）
+    path("admin/service-config/", views_service_config.AdminServiceConfigView.as_view(), name="admin-service-config"),
+    path("admin/service-config/test/", views_service_config.AdminServiceConfigTestView.as_view(), name="admin-service-config-test"),
+    path("admin/service-config/restore/", views_service_config.AdminServiceConfigRestoreView.as_view(), name="admin-service-config-restore"),
     path("ai/chat/", views.ai_chat, name="ai-chat"),
     path("ai/compare/", views.ai_compare, name="ai-compare"),
     path("ai/history/", views.ai_history, name="ai-history"),
