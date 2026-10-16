@@ -3,7 +3,7 @@ import type { ComponentType } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, ArrowDown, ArrowUp, Check, CheckCircle2, XCircle, CloudSun, Globe2,
-  Loader2, Plus, RefreshCcw, Save, Settings2, Trash2, FlaskConical, Wind, CalendarDays, Search, X
+  Loader2, Plus, RefreshCcw, Save, Settings2, Trash2, FlaskConical, Wind, CalendarDays, Search, X, Pencil
 } from "lucide-react";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { serviceConfigApi } from "@/api/services";
@@ -34,6 +34,8 @@ export default function AdminServiceConfigPage() {
   const [groupResults, setGroupResults] = useState<Record<string, { summary: string; ok: boolean; rows: { ok: boolean; msg: string }[] }>>({});
   // 行级测试结果（key: `${group}:${rowIdx}`）
   const [rowResults, setRowResults] = useState<Record<string, { ok: boolean; msg: string }>>({});
+  // 行级编辑模式（key: `${group}:${rowIdx}`，仅处于编辑模式的行可修改，其余默认只读）
+  const [editingRows, setEditingRows] = useState<Record<string, boolean>>({});
 
   const showToast = (msg: string, ok = true) => {
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
@@ -188,9 +190,63 @@ export default function AdminServiceConfigPage() {
       .finally(() => setTestingGroup(null));
   };
 
+  /** 清除指定组全部行级编辑模式（行移动/删除后索引变化，自动退出编辑） */
+  const clearEditingForGroup = (gname: string) => {
+    setEditingRows((prev) => {
+      const next: Record<string, boolean> = {};
+      for (const k of Object.keys(prev)) {
+        if (!k.startsWith(`${gname}:`)) next[k] = true;
+      }
+      return next;
+    });
+  };
+
+  /** 进入行级编辑模式（同一组仅一行可编辑，其余保持只读） */
+  const startEditRow = (gname: string, rowIdx: number) => {
+    setEditingRows((prev) => {
+      const next: Record<string, boolean> = {};
+      for (const k of Object.keys(prev)) {
+        if (!k.startsWith(`${gname}:`)) next[k] = true;
+      }
+      next[`${gname}:${rowIdx}`] = true;
+      return next;
+    });
+  };
+
+  /** 取消行级编辑：未保存的新增行直接移除，已保存行恢复服务端值 */
+  const cancelEditRow = (gname: string, rowIdx: number) => {
+    if (!data) return;
+    const group = data.groups[gname];
+    if (!group) return;
+    const key = group.type === "engines" ? "engines" : "endpoints";
+    const rows = (group[key] as any[]) || [];
+    const row = rows[rowIdx];
+    setEditingRows((prev) => {
+      const next = { ...prev };
+      delete next[`${gname}:${rowIdx}`];
+      return next;
+    });
+    if (row?._new) {
+      delRow(gname, rowIdx);
+    } else {
+      load(); // 恢复服务端已保存值
+    }
+  };
+
+  /** 保存行级编辑（整组保存并即时生效，退出编辑模式） */
+  const saveEditRow = async (gname: string, rowIdx: number) => {
+    await saveGroup(gname);
+    setEditingRows((prev) => {
+      const next = { ...prev };
+      delete next[`${gname}:${rowIdx}`];
+      return next;
+    });
+  };
+
   /** 上下移动（本地顺序，保存后生效） */
   const moveRow = (gname: string, rowIdx: number, dir: -1 | 1) => {
     if (!data) return;
+    clearEditingForGroup(gname);
     setData((prev) => {
       if (!prev) return prev;
       const group = prev.groups[gname];
@@ -207,6 +263,7 @@ export default function AdminServiceConfigPage() {
   /** 删除一行（本地） */
   const delRow = (gname: string, rowIdx: number) => {
     if (!data) return;
+    clearEditingForGroup(gname);
     setData((prev) => {
       if (!prev) return prev;
       const group = prev.groups[gname];
@@ -298,7 +355,8 @@ export default function AdminServiceConfigPage() {
       <div className="card rounded-2xl bg-brand-50/60 px-4 py-3 text-xs leading-relaxed text-gray-600 dark:bg-gray-800/60 dark:text-gray-300">
         统一管理各模块<b>内置默认的外部服务地址</b>。每组支持<b>多个端点</b>（按顺序依次尝试，启用中的端点不可用时自动向后切换）、
         行内<b>启用开关</b>、<b>上移/下移</b>排序、<b>重试次数</b>与<b>请求超时</b>；每行可<b>一键测试</b>（未保存也可测）。
-        输入框占位提示为出厂默认值，保存后即时生效。SearXNG 私有实例的地址在「AI 助手配置 → 搜索引擎配置」弹窗维护，AI 助手检索时优先于本管线。
+        行默认<b>只读</b>，点击<b>编辑</b>后方可修改；新增行同样需先点「编辑」。输入框占位提示为出厂默认值，保存后即时生效。
+        SearXNG 私有实例的地址在「AI 助手配置 → 搜索引擎配置」弹窗维护，AI 助手检索时优先于本管线。
       </div>
 
       {/* 分组卡片 */}
@@ -332,10 +390,10 @@ export default function AdminServiceConfigPage() {
                 {rows.map((row: any, idx: number) => {
                   const isFirst = idx === 0;
                   const isLast = idx === rows.length - 1;
-                  const isNew = !!row._new;
                   const tkey = `${gname}:${idx}`;
                   const testing = testingRows[tkey];
                   const rres = rowResults[tkey];
+                  const isEditing = !!editingRows[`${gname}:${idx}`];
                   return (
                     <div key={`${gname}-${idx}-${isEngines ? row.key : row.url}`} className={"flex flex-wrap items-center gap-1.5 rounded-xl border border-gray-100 bg-gray-50/60 p-2 dark:border-gray-700 dark:bg-gray-800/40" + (isEngines ? " engine-row" : " endpoint-row")}>
                       {isEngines && (
@@ -345,46 +403,57 @@ export default function AdminServiceConfigPage() {
                       )}
                       <input
                         type="text"
-                        className={`input flex-1 min-w-48 text-xs ${isEngines ? "engine-url" : "endpoint-url"}`}
+                        className={`input flex-1 min-w-48 text-xs ${isEngines ? "engine-url" : "endpoint-url"} ${!isEditing ? "bg-gray-100 text-gray-400 dark:bg-gray-700/60" : ""}`}
                         value={row.url || ""}
                         placeholder={isEngines ? (group.defaults?.find((d) => d.key === row.key)?.url || "如：https://...") : (group.defaults?.[0]?.url || "如：https://...")}
                         onChange={(e) => updateRow(gname, idx, "url", e.target.value)}
+                        disabled={!isEditing}
                       />
                       {isEngines && (
                         <input
                           type="number"
-                          className="engine-timeout w-16 shrink-0 rounded-lg border border-gray-200 px-2 py-1 text-xs dark:border-gray-600 dark:bg-gray-800"
+                          className={"engine-timeout w-16 shrink-0 rounded-lg border border-gray-200 px-2 py-1 text-xs dark:border-gray-600 dark:bg-gray-800" + (!isEditing ? " bg-gray-100 text-gray-400 dark:bg-gray-700/40" : "")}
                           value={row.timeout ?? 1}
                           min={0.3}
                           max={30}
                           step={0.1}
                           title="行级请求超时（秒）"
                           onChange={(e) => updateRow(gname, idx, "timeout", parseFloat(e.target.value) || 1)}
+                          disabled={!isEditing}
                         />
                       )}
-                      <label className="flex items-center gap-1 text-xs text-gray-500" title={row.enabled ? "停用（不参与故障转移）" : "启用该端点"}>
-                        <input type="checkbox" className="row-enabled h-3.5 w-3.5 accent-brand-500" checked={row.enabled} onChange={(e) => updateRow(gname, idx, "enabled", e.target.checked)} />
+                      <label className={"flex items-center gap-1 text-xs " + (isEditing ? "text-gray-500" : "text-gray-300 dark:text-gray-600")} title={row.enabled ? "停用（不参与故障转移）" : "启用该端点"}>
+                        <input type="checkbox" className="row-enabled h-3.5 w-3.5 accent-brand-500" checked={row.enabled} onChange={(e) => updateRow(gname, idx, "enabled", e.target.checked)} disabled={!isEditing} />
                         启用
                       </label>
-                      <button type="button" className="btn-secondary gap-1 p-1.5 text-xs" title="测试该行" onClick={() => testRow(gname, idx)} disabled={testing}>
-                        {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FlaskConical className="h-3.5 w-3.5" />} 测试
-                      </button>
-                      <button type="button" className="btn-secondary gap-1 p-1.5 text-xs" title="上移" onClick={() => moveRow(gname, idx, -1)} disabled={isFirst}>
-                        <ArrowUp className="h-3.5 w-3.5" /> 上移
-                      </button>
-                      <button type="button" className="btn-secondary gap-1 p-1.5 text-xs" title="下移" onClick={() => moveRow(gname, idx, 1)} disabled={isLast}>
-                        <ArrowDown className="h-3.5 w-3.5" /> 下移
-                      </button>
-                      <button type="button" className="btn-secondary gap-1 p-1.5 text-xs text-red-500" title="删除" onClick={() => delRow(gname, idx)}>
-                        <Trash2 className="h-3.5 w-3.5" /> 删除
-                      </button>
-                      {isNew && (
+                      {!isEditing ? (
                         <>
-                          <button type="button" className="btn-primary gap-1 p-1.5 text-xs" onClick={() => saveGroup(gname)}>
+                          <button type="button" className="btn-primary gap-1 p-1.5 text-xs" title="编辑该行" onClick={() => startEditRow(gname, idx)}>
+                            <Pencil className="h-3.5 w-3.5" /> 编辑
+                          </button>
+                          <button type="button" className="btn-secondary gap-1 p-1.5 text-xs" title="测试该行" onClick={() => testRow(gname, idx)} disabled={testing}>
+                            {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FlaskConical className="h-3.5 w-3.5" />} 测试
+                          </button>
+                          <button type="button" className={"btn-secondary gap-1 p-1.5 text-xs" + (isFirst ? " opacity-40 cursor-not-allowed" : "")} title={isFirst ? "已是第一条，无法上移" : "上移"} onClick={() => moveRow(gname, idx, -1)} disabled={isFirst}>
+                            <ArrowUp className="h-3.5 w-3.5" /> 上移
+                          </button>
+                          <button type="button" className={"btn-secondary gap-1 p-1.5 text-xs" + (isLast ? " opacity-40 cursor-not-allowed" : "")} title={isLast ? "已是最后一条，无法下移" : "下移"} onClick={() => moveRow(gname, idx, 1)} disabled={isLast}>
+                            <ArrowDown className="h-3.5 w-3.5" /> 下移
+                          </button>
+                          <button type="button" className="btn-secondary gap-1 p-1.5 text-xs text-red-500" title="删除" onClick={() => delRow(gname, idx)}>
+                            <Trash2 className="h-3.5 w-3.5" /> 删除
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button type="button" className="btn-primary gap-1 p-1.5 text-xs" title="保存该行（整组即时生效）" onClick={() => saveEditRow(gname, idx)}>
                             <Check className="h-3.5 w-3.5" /> 保存
                           </button>
-                          <button type="button" className="btn-secondary gap-1 p-1.5 text-xs text-gray-500" onClick={() => delRow(gname, idx)}>
+                          <button type="button" className="btn-secondary gap-1 p-1.5 text-xs text-gray-500" title="取消编辑（恢复已保存值）" onClick={() => cancelEditRow(gname, idx)}>
                             <X className="h-3.5 w-3.5" /> 取消
+                          </button>
+                          <button type="button" className="btn-secondary gap-1 p-1.5 text-xs" title="测试该行" onClick={() => testRow(gname, idx)} disabled={testing}>
+                            {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FlaskConical className="h-3.5 w-3.5" />} 测试
                           </button>
                         </>
                       )}

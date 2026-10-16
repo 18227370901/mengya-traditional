@@ -1542,13 +1542,15 @@ done
 - 业务接入：`weather_service._http_get_group()`、`holiday_service._fetch_from_timor()` 双路径+重试、`web_search` 引擎管线动态化（`_ENGINE_FUNCS` + `_build_pipeline`），SearXNG 仍第一优先。
 
 #### 10.35.4 前端新增
-- `pages/AdminServiceConfigPage.tsx`（管理面板新入口）：5 组卡片、行级输入/开关/上移/下移/删除/新增行保存取消、组级参数、行级与组级一键测试结果、恢复默认（ConfirmDialog）、toast 提示；
+- `pages/AdminServiceConfigPage.tsx`（管理面板新入口）：5 组卡片、行级**默认只读 + 编辑双态**（`editingRows` 状态机，编辑/保存/取消）、
+  上移/下移（**首行上移、末行下移置灰** `opacity-40 + cursor-not-allowed`）、删除、行级与组级一键测试结果、新增行（同样默认只读）、
+  恢复默认（ConfirmDialog）、toast 提示；编辑态互斥（同组同时仅一行可编辑），移动/删除自动退出编辑避免索引错位；
 - 路由 `/admin/service-config`（AdminGuard），`api/services.ts` 新增 `serviceConfigApi`，类型 `types/serviceConfig.ts`。
 
 #### 10.35.5 验证结论
 - 后端 check/迁移/API 权限链路（401/403/管理员 GET·PUT·测试·恢复）全部通过；
 - 故障转移实测：Open-Meteo 三端点、timor.tech、Bing/百度真实请求成功解析；
 - 前端 `npm run build` 零报错，产物同步 templates/static；
-- 一体化服务重启后浏览器逐项验证全部通过，首页天气/万年历/AI 助手链路无回归，测试数据已清理。
+- 一体化服务重启后浏览器逐项验证全部通过：行默认只读、编辑/保存/取消、首尾行置灰、新增行默认只读、排序，首页天气/万年历/AI 助手链路无回归，测试数据已清理。
 
 
