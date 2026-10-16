@@ -1912,7 +1912,41 @@ apps/core/                                    apps/core/
   <ul style="color:#334155;line-height:1.6;">
     <li>前端 <code>npm run build</code> 零警告零报错通过；一体化服务运行正常（端口 5173，200 OK）；</li>
     <li>全孕期阶段清晰显示参考宝宝，2026-04-28 孕前备孕记录成功入库；</li>
-    <li>时序活跃度图表横轴日期排版舒适清晰，滑动条平滑；下钻形态继承且多宝宝图表点击精准匹配。</li>
+<li>时序活跃度图表横轴日期排版舒适清晰，滑动条平滑；下钻形态继承且多宝宝图表点击精准匹配。</li>
+  </ul>
+</div>
+
+
+<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:20px;margin-bottom:24px;">
+  <h3 style="color:#0f172a;margin-top:0;">10.35 外部接口服务配置统一管理（天气/节假日/AI 公网搜索引擎管线）(v1.73)</h3>
+  <h4 style="color:#1e293b;font-size:15px;margin-top:12px;">10.35.1 设计目标</h4>
+  <ul style="color:#334155;line-height:1.6;">
+    <li>将散落各服务的「内置默认外部调用地址」（Open-Meteo 天气三接口、timor.tech 节假日、7 大公网搜索引擎管线）统一收敛为管理员在线可配置项；</li>
+    <li>支持多端点故障转移、重试参数、行级开关/排序/一键测试，从根本上解除"地址变更需改代码"的运维痛点；SearXNG 私有实例配置入口保持原位（AI 助手配置页）。</li>
+  </ul>
+  <h4 style="color:#1e293b;font-size:15px;margin-top:12px;">10.35.2 配置模型</h4>
+  <ul style="color:#334155;line-height:1.6;">
+    <li><strong>普通组</strong>（天气三组 / 节假日）：<code>{endpoints: [{url, enabled}], timeout(秒), retries(轮)}</code>；</li>
+    <li><strong>引擎组</strong>（search_pipeline）：<code>{engines: [{key, url, timeout, enabled}], retries(轮)}</code>，key 绑定 web_search.py 专属 HTML 解析器；</li>
+    <li>存储：<code>SystemSetting.external_api_config</code> JSONField（迁移 <code>0029_external_api_config</code>），实时读库，异常兜底返回默认值。</li>
+  </ul>
+  <h4 style="color:#1e293b;font-size:15px;margin-top:12px;">10.35.3 后端实现</h4>
+  <ul style="color:#334155;line-height:1.6;">
+    <li><code>apps/core/services/service_config.py</code>：分组默认值（<code>DEFAULT_GROUPS</code>）、读写、故障转移遍历、节假日 <code>{年份}</code> 占位符规范化与注入、真实协议一键测试（<code>test_endpoint</code> / <code>test_engine</code> / <code>test_group</code>）；</li>
+    <li><code>apps/core/views_service_config.py</code>：<code>admin/service-config/</code>（GET/PUT）、<code>admin/service-config/test/</code>、<code>admin/service-config/restore/</code>，仅管理员 + 审计；</li>
+    <li>业务接入：<code>weather_service._http_get_group()</code>、<code>holiday_service._fetch_from_timor()</code> 双路径+重试、<code>web_search</code> 引擎管线动态化（<code>_ENGINE_FUNCS</code> + <code>_build_pipeline</code>），SearXNG 仍第一优先。</li>
+  </ul>
+  <h4 style="color:#1e293b;font-size:15px;margin-top:12px;">10.35.4 前端新增</h4>
+  <ul style="color:#334155;line-height:1.6;">
+    <li><code>pages/AdminServiceConfigPage.tsx</code>（管理面板新入口）：5 组卡片、行级输入/开关/上移/下移/删除/新增行保存取消、组级参数、行级与组级一键测试结果、恢复默认（ConfirmDialog）、toast 提示；</li>
+    <li>路由 <code>/admin/service-config</code>（AdminGuard），<code>api/services.ts</code> 新增 <code>serviceConfigApi</code>，类型 <code>types/serviceConfig.ts</code>。</li>
+  </ul>
+  <h4 style="color:#1e293b;font-size:15px;margin-top:12px;">10.35.5 验证结论</h4>
+  <ul style="color:#334155;line-height:1.6;">
+    <li>后端 check/迁移/API 权限链路（401/403/管理员 GET·PUT·测试·恢复）全部通过；</li>
+    <li>故障转移实测：Open-Meteo 三端点、timor.tech、Bing/百度真实请求成功解析；</li>
+    <li>前端 <code>npm run build</code> 零报错，产物同步 templates/static；</li>
+    <li>一体化服务重启后浏览器逐项验证全部通过，首页天气/万年历/AI 助手链路无回归，测试数据已清理。</li>
   </ul>
 </div>
 

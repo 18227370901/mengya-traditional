@@ -1523,3 +1523,32 @@ done
 - Django 一体化服务（端口 5173）重启成功，本地 HTTP 响应 200 OK；
 - 验证全孕期阶段自动展示参考宝宝姓名与多宝切换，孕前备孕记录（如 2026-04-28）顺利入库且区间冲突提示数学准确；
 - 验证时序打卡图表日期标签清晰可见无遮挡，滑动缩放平滑；下钻图表形态与外部一致，多宝宝图表点击精准匹配对应宝宝。
+
+
+### 10.35 外部接口服务配置统一管理（天气/节假日/AI 公网搜索引擎管线）(v1.73)
+
+#### 10.35.1 设计目标
+将散落各服务的「内置默认外部调用地址」（Open-Meteo 天气三接口、timor.tech 节假日、7 大公网搜索引擎管线）统一收敛为管理员在线可配置项，
+支持多端点故障转移、重试参数、行级开关/排序/一键测试，从根本上解除"地址变更需改代码"的运维痛点；SearXNG 私有实例配置入口保持原位（AI 助手配置页）。
+
+#### 10.35.2 配置模型
+- **普通组**（天气三组 / 节假日）：`{endpoints: [{url, enabled}], timeout(秒), retries(轮)}`；
+- **引擎组**（search_pipeline）：`{engines: [{key, url, timeout, enabled}], retries(轮)}`，key 绑定 web_search.py 专属 HTML 解析器；
+- 存储：`SystemSetting.external_api_config` JSONField（迁移 `0029_external_api_config`），实时读库，异常兜底返回默认值。
+
+#### 10.35.3 后端实现
+- `apps/core/services/service_config.py`：分组默认值（`DEFAULT_GROUPS`）、读写、故障转移遍历、节假日 `{年份}` 占位符规范化与注入、真实协议一键测试（`test_endpoint` / `test_engine` / `test_group`）；
+- `apps/core/views_service_config.py`：`admin/service-config/`（GET/PUT）、`admin/service-config/test/`、`admin/service-config/restore/`，仅管理员 + 审计；
+- 业务接入：`weather_service._http_get_group()`、`holiday_service._fetch_from_timor()` 双路径+重试、`web_search` 引擎管线动态化（`_ENGINE_FUNCS` + `_build_pipeline`），SearXNG 仍第一优先。
+
+#### 10.35.4 前端新增
+- `pages/AdminServiceConfigPage.tsx`（管理面板新入口）：5 组卡片、行级输入/开关/上移/下移/删除/新增行保存取消、组级参数、行级与组级一键测试结果、恢复默认（ConfirmDialog）、toast 提示；
+- 路由 `/admin/service-config`（AdminGuard），`api/services.ts` 新增 `serviceConfigApi`，类型 `types/serviceConfig.ts`。
+
+#### 10.35.5 验证结论
+- 后端 check/迁移/API 权限链路（401/403/管理员 GET·PUT·测试·恢复）全部通过；
+- 故障转移实测：Open-Meteo 三端点、timor.tech、Bing/百度真实请求成功解析；
+- 前端 `npm run build` 零报错，产物同步 templates/static；
+- 一体化服务重启后浏览器逐项验证全部通过，首页天气/万年历/AI 助手链路无回归，测试数据已清理。
+
+

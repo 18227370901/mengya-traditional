@@ -1300,3 +1300,46 @@ mengya-local/
 - 前端 `npm run build` 构建零报错；
 - 一体化服务重启验证通过（端口 5173），HTTP 响应 200 OK；
 - 自动化测试与临床边界验证 100% 通过。
+
+---
+
+## 33. v1.73 外部接口服务配置统一管理（天气/节假日/AI公网搜索引擎管线）
+
+### 33.1 背景与目标
+系统各模块长期内置默认外部服务地址（Open-Meteo 三接口、timor.tech 节假日、AI 公网搜索引擎管线），
+地址、超时、启停、故障转移顺序全部硬编码在代码中，管理员无法在页面上调整。本版本将此类「内置默认调用地址」
+统一收口到管理员「外部接口配置」页，实现**多端点、可开关、可排序、自动故障转移、可配置重试参数、一键测试**的运维能力。
+
+### 33.2 覆盖范围（5 个配置组）
+
+| 配置组 | 默认端点 | 说明 |
+| :--- | :--- | :--- |
+| 天气·地理编码 | `https://geocoding-api.open-meteo.com/v1/search` | Open-Meteo Geocoding |
+| 天气·天气预报 | `https://api.open-meteo.com/v1/forecast` | Open-Meteo Forecast |
+| 天气·空气质量 | `https://air-quality-api.open-meteo.com/v1/air-quality` | Open-Meteo Air Quality |
+| 法定节假日 | `https://timor.tech/api/holiday/year/` | 年份占位符自动补全 |
+| AI 公网搜索引擎管线 | DuckDuckGo / Google / Bing / 360 / 搜狗 / 百度 / 雅虎 7 引擎 | 行级地址+行级超时+行级开关+顺序 |
+
+> SearXNG 私有实例地址（`SEARXNG_BASE_URL` 等）仍在「AI 助手配置 → 搜索引擎配置」弹窗维护，
+> AI 助手实时检索始终 **SearXNG 优先**，本页公网引擎管线作为其兜底（受 `AI_SEARCH_FALLBACK_ENABLED` 总开关控制）。
+
+### 33.3 核心能力（逐项对照需求）
+
+1. **多端点/多引擎**：每组支持多个端点（天气组/节假日组）或引擎行（搜索管线组），可增删；
+2. **行级开关**：每行独立「启用」开关，停用即不参与故障转移；
+3. **上移/下移排序**：顺序即故障转移顺序，首行上移与末行下移自动置灰；
+4. **自动故障转移**：按序遍历启用端点，任一成功即返回；全部失败按「重试次数（轮）」整轮重试；
+5. **可配置重试时长及次数**：普通组「请求超时（秒）+ 重试次数（轮）」，引擎组「行级超时（秒）+ 组级重试次数」；
+6. **一键测试**：行级「测试」（按各组真实协议做结构校验，非仅 HTTP 200）与组级「测试全部启用」（模拟故障转移顺序逐条输出）；
+7. **行级保存/取消**：新增行显示「保存/取消」按钮，保存后转为已保存行（仅测试/上移/下移/删除）；
+8. **全局保存 + 恢复默认值**：顶部「保存配置」一键全量落库即时生效；「恢复默认值」经二次确认弹窗后清空配置、业务自动回落内置默认；
+9. **占位提示 = 出厂默认值**：输入框 placeholder 即各端点的内置默认地址；
+10. **toast 轻提示**：全部操作反馈走顶部居中轻提示浮层，替代原生弹窗。
+
+### 33.4 技术实现
+
+**后端（Django + DRF）**
+- `apps/core/services/service_config.py`（新增）：分组默认值定义（`DEFAULT_GROUPS`）、配置读写（复用 `SystemSetting.external_api_config` JSONField）、
+  故障转移遍历、节假日 `{年份}` 占位符规范化/注入、按各组真实协议的一键测试执行器（`test_endpoint` / `test_engine` / `test_group`）；
+- `apps/core/views_service_config.py`（新增）：`/api/admin/service-config/`（GET 全量 / PUT 单组保存）、
+  `/api/admin/service-config/test/`（一键测试）、`/api/admin/service-config/restore/`（恢复默认），仅 `is_staff` 管理员 + 审计日志；
