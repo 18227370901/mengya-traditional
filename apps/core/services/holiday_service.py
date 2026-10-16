@@ -93,30 +93,43 @@ def _save_disk_cache(year, holiday):
 
 
 def _fetch_from_timor(year):
-    """从 timor.tech 拉取某年班/休数据（双路径：禁代理直连优先 + 系统代理兜底）"""
-    url = TIMOR_API.format(year)
+    """从配置的节假日数据源拉取某年班/休数据
+    v1.73 多源故障转移：按「外部接口配置」页启用的端点顺序依次尝试（默认 timor.tech），
+    每个端点走双路径（禁代理直连优先 + 系统代理兜底）；全部失败按配置 retries 整轮重试。
+    """
+    from . import service_config
+    urls = service_config.get_enabled_urls('holiday')
+    if not urls:
+        # 兜底：库里无配置时回落内置默认（兼容历史 {year} 占位格式）
+        urls = [TIMOR_API.replace('{year}', '')]
+    timeout = service_config.get_timeout('holiday')
+    retries = service_config.get_retries('holiday')
     last_err = None
-    # 路径①：禁代理直连（国内环境 timor.tech 直连可达，系统代理故障时不被拖死）
-    try:
-        resp = requests.get(
-            url,
-            timeout=HOLIDAY_HTTP_TIMEOUT,
-            headers=HOLIDAY_HEADERS,
-            proxies={'http': None, 'https': None},
-        )
-        resp.raise_for_status()
-        return _parse_timor(resp)
-    except Exception as e:
-        last_err = e
-    # 路径②：回落系统代理（默认 trust_env 行为）
-    try:
-        resp = requests.get(url, timeout=HOLIDAY_HTTP_TIMEOUT, headers=HOLIDAY_HEADERS)
-        resp.raise_for_status()
-        return _parse_timor(resp)
-    except Exception as e:
-        last_err = e
+    for _round in range(retries + 1):
+        for url_tpl in urls:
+            # 注入年份（兼容 {年份} 与 {} 两种占位符）
+            url = service_config.holiday_url_for_year(url_tpl, year)
+            # 路径①：禁代理直连（国内环境 timor.tech 直连可达，系统代理故障时不被拖死）
+            try:
+                resp = requests.get(
+                    url,
+                    timeout=(5, timeout),
+                    headers=HOLIDAY_HEADERS,
+                    proxies={'http': None, 'https': None},
+                )
+                resp.raise_for_status()
+                return _parse_timor(resp)
+            except Exception as e:
+                last_err = e
+            # 路径②：回落系统代理（默认 trust_env 行为）
+            try:
+                resp = requests.get(url, timeout=(5, timeout), headers=HOLIDAY_HEADERS)
+                resp.raise_for_status()
+                return _parse_timor(resp)
+            except Exception as e:
+                last_err = e
     # 双路径均失败：降级空字典（不抛异常，万年历主体不受影响）
-    print('[Holiday] 拉取 %d 年班/休数据失败（双路径均超时或异常）: %s' % (year, last_err))
+    print('[Holiday] 拉取 %d 年班/休数据失败（全部端点双路径均超时或异常）: %s' % (year, last_err))
     return {}
 
 

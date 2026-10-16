@@ -1,6 +1,7 @@
 import api from "./client";
 import type { ApiResponse, ChatSessionDetail, ChatSessionSummary, HealthRecord, ShoppingList, ShoppingListItem, AIChatResult, BabyShoppingListResponse, BabyShoppingCategories, AIRecommendResult } from "@/types";
 import type { BmiAnalysisInput, BmiAnalysisResult, BmiTimeSeriesRecord, SearXNGConfig, SearXNGTestResult, CsvImportResult } from "@/types/health";
+import type { ServiceConfigData, ServiceConfigPayload, ServiceTestResponse } from "@/types/serviceConfig";
 export const shoppingApi = {
   list: () => api.get<ApiResponse<ShoppingList[]>>("/shopping-lists/").then((r) => r.data.data),
 
@@ -43,6 +44,16 @@ export const searxngConfigApi = {
     api.put<ApiResponse<SearXNGConfig>>("/admin/searxng-config/", data).then((r) => r.data.data),
   test: (data?: Partial<SearXNGConfig>) =>
     api.post<ApiResponse<SearXNGTestResult>>("/admin/searxng-config/test/", data).then((r) => r.data.data),
+};
+
+// v1.73 外部接口服务配置（天气 / 节假日 / AI 公网搜索引擎管线）
+export const serviceConfigApi = {
+  get: () => api.get<ApiResponse<ServiceConfigData>>("/admin/service-config/").then((r) => r.data.data),
+  update: (data: ServiceConfigPayload) =>
+    api.put<ApiResponse<ServiceConfigData>>("/admin/service-config/", data).then((r) => r.data.data),
+  test: (data: ServiceConfigPayload) =>
+    api.post<ApiResponse<ServiceTestResponse>>("/admin/service-config/test/", data).then((r) => r.data.data),
+  restore: () => api.post<ApiResponse<ServiceConfigData>>("/admin/service-config/restore/").then((r) => r.data.data),
 };
 
 export const healthApi = {
