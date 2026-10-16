@@ -355,7 +355,7 @@ export default function AdminServiceConfigPage() {
       <div className="card rounded-2xl bg-brand-50/60 px-4 py-3 text-xs leading-relaxed text-gray-600 dark:bg-gray-800/60 dark:text-gray-300">
         统一管理各模块<b>内置默认的外部服务地址</b>。每组支持<b>多个端点</b>（按顺序依次尝试，启用中的端点不可用时自动向后切换）、
         行内<b>启用开关</b>、<b>上移/下移</b>排序、<b>重试次数</b>与<b>请求超时</b>；每行可<b>一键测试</b>（未保存也可测）。
-        行默认<b>只读</b>，点击<b>编辑</b>后方可修改；新增行同样需先点「编辑」。输入框占位提示为出厂默认值，保存后即时生效。
+        行默认<b>只读</b>，点击<b>编辑</b>后方可修改地址；<b>新增行</b>的启用开关可直接勾选，已保存行需编辑后调整。输入框占位提示为出厂默认值，保存后即时生效。
         SearXNG 私有实例的地址在「AI 助手配置 → 搜索引擎配置」弹窗维护，AI 助手检索时优先于本管线。
       </div>
 
@@ -390,10 +390,13 @@ export default function AdminServiceConfigPage() {
                 {rows.map((row: any, idx: number) => {
                   const isFirst = idx === 0;
                   const isLast = idx === rows.length - 1;
+                  const isNew = !!row._new;
                   const tkey = `${gname}:${idx}`;
                   const testing = testingRows[tkey];
                   const rres = rowResults[tkey];
                   const isEditing = !!editingRows[`${gname}:${idx}`];
+                  // 启用开关：新增行（_new）默认即可直接勾选；已保存行仅在编辑模式下可操作
+                  const enabledLocked = !isEditing && !isNew;
                   return (
                     <div key={`${gname}-${idx}-${isEngines ? row.key : row.url}`} className={"flex flex-wrap items-center gap-1.5 rounded-xl border border-gray-100 bg-gray-50/60 p-2 dark:border-gray-700 dark:bg-gray-800/40" + (isEngines ? " engine-row" : " endpoint-row")}>
                       {isEngines && (
@@ -422,8 +425,8 @@ export default function AdminServiceConfigPage() {
                           disabled={!isEditing}
                         />
                       )}
-                      <label className={"flex items-center gap-1 text-xs " + (isEditing ? "text-gray-500" : "text-gray-300 dark:text-gray-600")} title={row.enabled ? "停用（不参与故障转移）" : "启用该端点"}>
-                        <input type="checkbox" className="row-enabled h-3.5 w-3.5 accent-brand-500" checked={row.enabled} onChange={(e) => updateRow(gname, idx, "enabled", e.target.checked)} disabled={!isEditing} />
+                      <label className={"flex items-center gap-1 text-xs " + (enabledLocked ? "text-gray-300 dark:text-gray-600" : "text-gray-500")} title={row.enabled ? "停用（不参与故障转移）" : "启用该端点"}>
+                        <input type="checkbox" className="row-enabled h-3.5 w-3.5 accent-brand-500" checked={row.enabled} onChange={(e) => updateRow(gname, idx, "enabled", e.target.checked)} disabled={enabledLocked} />
                         启用
                       </label>
                       {!isEditing ? (

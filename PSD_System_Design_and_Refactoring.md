@@ -1543,7 +1543,8 @@ done
 
 #### 10.35.4 前端新增
 - `pages/AdminServiceConfigPage.tsx`（管理面板新入口）：5 组卡片、行级**默认只读 + 编辑双态**（`editingRows` 状态机，编辑/保存/取消）、
-  上移/下移（**首行上移、末行下移置灰** `opacity-40 + cursor-not-allowed`）、删除、行级与组级一键测试结果、新增行（同样默认只读）、
+  上移/下移（**首行上移、末行下移置灰** `opacity-40 + cursor-not-allowed`）、删除、行级与组级一键测试结果、
+  **新增行（_new）启用开关默认可直接勾选**（`enabledLocked = !isEditing && !isNew`），已保存行开关随编辑态锁定、
   恢复默认（ConfirmDialog）、toast 提示；编辑态互斥（同组同时仅一行可编辑），移动/删除自动退出编辑避免索引错位；
 - 路由 `/admin/service-config`（AdminGuard），`api/services.ts` 新增 `serviceConfigApi`，类型 `types/serviceConfig.ts`。
 
