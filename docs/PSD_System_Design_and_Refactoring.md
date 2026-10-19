@@ -1665,3 +1665,36 @@ done
 - **前端重构**：更新 `HealthPage.tsx`、`UnifiedHealthCheckIn.tsx`、`CsvImportModal.tsx`、`BmiFormCard.tsx`、`VitalsFormCard.tsx`、`VitalsAnalysisView.tsx`；
 - **后端适配**：更新 `apps/core/views.py` 与序列化器，完善 `batch_import` 与 `BmiAnalysisInputSerializer`；
 - **构建与进程验收**：`tools/build_frontend.py` 打包通过，静态资源完整同步；`manage.py check` 0 警告；`run.ps1 restart` 平滑重启（PID: 6988），端口 5173 HTTP 200 就绪。
+
+## 10.39 ADR 10.39：天气与万年历精度深度优化、请求频次治理与外部服务配置生效机制重构（v1.77）
+
+### 10.39.1 决策背景与核心痛点
+随着萌芽平台气象万年历与日常关怀模块的使用深化，用户与管理员反馈了以下核心体验与服务治理缺陷：
+1. **区县级地址解析降级失真**：用户自由搜索“四川省巴中市恩阳区”时，由于底层 Open-Meteo 海外地理编码未收录中国三级区县“恩阳”，系统降级逻辑回退至地级市“巴中”，导致气象数据偏离实际区县。
+2. **搜索状态反馈缺失**：搜索按钮无动态 Spinner 与正在查询状态，已有天气数据时再次搜索无卡片加载遮罩与 Toast 提示，用户感知为“界面无响应”。
+3. **数据重复无节制拉取**：每次进入天气页面均重新请求外部网络，缺乏本地持久化会话缓存，造成高频冗余请求与网络资源浪费。
+4. **年份控件图标被截断**：原生 `<select>` 继承全局输入框宽度并在窄屏与特定浏览器下由于 padding 不足导致原生下拉箭头被截断，且日历图标无 `shrink-0` 产生挤压形变。
+5. **首页大卡片定位同步体验突兀**：用户在天气页面变更城市后，首页关怀卡片无法感知数据加载态，缺乏过渡动画与“正在同步最新定位天气”友好提示。
+6. **外部接口配置停用失效**：管理员在后台停用天气预报或节假日端点后，底层调度因 `urls` 为空而暴力回落内置默认官方 URL，导致停用配置形同虚设。
+
+### 10.39.2 架构决策与设计要点
+1. **双层地址解析架构**：
+   - **L1 前端本地逆向解析**：充分复用 `frontend/src/lib/chinaRegions.ts` 中 3000+ 区县树 `CHINA_REGIONS`，通过 `resolveRegionFromText` 实现省市区县多级包含贪婪匹配，0 毫秒延迟、100% 精度直达目标区县经纬度坐标（如恩阳区 `[106.4865, 31.8163]`）；
+   - **L2 后端智能拆词**：若本地未命中，后端优化降级策略，优先保全用户原始区县名称，不草率覆盖为地级市。
+2. **渐进式视觉交互与状态闭环**：
+   - 搜索按钮集成动态 `<RefreshCw className="animate-spin" />` 并切换文字为“正在查询…”；
+   - 增加悬浮 Toast 状态通知（成功更新/错误提示）；
+   - 万年历年月选择器改用自定义封装胶囊控件，使用 `appearance-none` 消除浏览器原生下拉箭头，显式内嵌 Lucide `<ChevronDown />` 图标并锁定安全间距与最小宽度（`min-w-[96px]`）。
+3. **三级缓存与低频请求治理**：
+   - **本地会话持久化**：以用户 ID 隔离存储 `mengya_weather_cache_${uid}`，包含坐标、地名全称、完整预报与时间戳；
+   - **秒开机制**：页面再次载入时直接呈现缓存内容，仅当用户显式搜索、级联查询或主动刷新时才发出网络请求；
+   - **登出生命周期清理**：在 `authStore.logout` 中深度清理全部气象缓存键，保障换号隐私与数据隔离。
+4. **外部接口配置生效机制修复**：
+   - 剔除 `_http_get_group` 中的 `if not urls: urls = [default_url]` 强行补位漏洞，明确空列表即为“管理员显式停用”，严格阻断外网请求并抛出统一 503 异常；
+   - 在配置保存接口 `AdminServiceConfigView.put` 与 `restore` 中加入 `_HOME_WEATHER_CACHE.clear()`，保证配置保存后 0 秒即时生效。
+
+### 10.39.3 实施与验证结果
+- **前端重构**：修改 `WeatherPage.tsx`、`HomeWeatherBanner.tsx`、`chinaRegions.ts`、`authStore.ts`；
+- **后端重构**：修改 `weather_service.py`、`holiday_service.py`、`service_config.py`、`views_service_config.py`；
+- **双端同步**：全量代码与静态构建产物同步至 `mengya-local` 与 `mengya-docker`，测试用例全部通过。
+

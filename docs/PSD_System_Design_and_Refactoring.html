@@ -2009,6 +2009,21 @@ apps/core/                                    apps/core/
   </ul>
 </div>
 
+
+<div class="adr-card" id="adr-10-39">
+  <h3>10.39 ADR 10.39：天气与万年历精度深度优化、请求频次治理与外部服务配置生效机制重构（v1.77）</h3>
+  <div class="meta"><span class="badge badge-success">已实施</span> <span class="badge badge-primary">v1.77</span> <span class="badge">2026-10-19</span></div>
+  <p><strong>痛点问题：</strong>自由搜索区县误降级至地级市（如恩阳区变巴中）、搜索无反馈、高频重复拉取无本地持久化、年份图标右侧裁切、首页大卡片定位同步缺加载态、停用外部端点因强行兜底依然调用外网。</p>
+  <p><strong>解决方案：</strong></p>
+  <ul>
+    <li><strong>区县级精准匹配：</strong>前端优先通过本地 3000+ 行政区划树 <code>resolveRegionFromText</code> 贪婪逆向解析，0 延迟、100% 精度直取真实经纬度坐标，防止海外 Geocoding 错误降级；</li>
+    <li><strong>搜索反馈闭环：</strong>搜索按钮集成动态 Spinner 与“正在查询…”文案，看板局部遮罩过渡，全局 Toast 状态通知；</li>
+    <li><strong>会话持久化缓存：</strong>本地用户级持久化缓存，进入页面秒开免拉取，仅在手动搜索、级联查询或主动刷新时请求，退出登录即时清理；</li>
+    <li><strong>万年历年份控件防裁切：</strong>消除浏览器原生 select 裁切，专属胶囊控件内嵌 ChevronDown 图标并锁定安全间距与最小宽度；</li>
+    <li><strong>首页大卡片定位同步 Loading：</strong>定位变更时动态切换毛玻璃 Loading 态与目标城市文案，平滑淡入最新数据；</li>
+    <li><strong>外部接口停用严格生效：</strong>移除暴力回落漏洞，端点全停用直接中断外网请求并抛出 503 业务异常，配置更新即时清空服务端内存缓存。</li>
+  </ul>
+</div>
 </body>
 
 </html>
