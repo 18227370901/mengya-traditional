@@ -2022,6 +2022,7 @@ apps/core/                                    apps/core/
     <li><strong>万年历年份控件防裁切：</strong>消除浏览器原生 select 裁切，专属胶囊控件内嵌 ChevronDown 图标并锁定安全间距与最小宽度；</li>
     <li><strong>首页大卡片定位同步 Loading：</strong>定位变更时动态切换毛玻璃 Loading 态与目标城市文案，平滑淡入最新数据；</li>
     <li><strong>外部接口停用严格生效：</strong>移除暴力回落漏洞，端点全停用直接中断外网请求并抛出 503 业务异常，配置更新即时清空服务端内存缓存。</li>
+    <li><strong>首页大卡片定位同步 Loading 态落地 (v1.77.1)：</strong>彻底接入 JSX 条件分支，实现双模 Loading 态（定位变更动态 Spinner 与目标城市提示 + 首次登录平滑过渡），结合 SWR 毫秒秒开与普通用户共享天气友好提示，彻底消除万年历抢跑与滞留。</li>
   </ul>
 </div>
 </body>
