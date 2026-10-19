@@ -1969,6 +1969,46 @@ apps/core/                                    apps/core/
   </ul>
 </div>
 
+
+<div style="background:#fff;border-radius:12px;padding:24px;margin-bottom:24px;box-shadow:0 1px 3px rgba(0,0,0,0.05);border:1px solid #e2e8f0;">
+  <h3 style="color:#0f172a;font-size:18px;margin-bottom:12px;border-bottom:2px solid #ec4899;padding-bottom:8px;">10.37 妈妈健康中心生命体征监测（血压/血糖）与智能双轨分析体系（v1.75）</h3>
+  <p style="color:#475569;font-size:14px;line-height:1.6;">针对妊娠期高血压疾病与妊娠期糖尿病（GDM）两大核心并发症，系统正式落地方案 A，融入「妈妈·孕产档案」二级子看板架构，建立严谨合理的临床标准分级体系，支持非必填部分录入与未录入展示说明，并联动 ECharts 时序走势与双通道 AI 专家解读。</p>
+  <h4 style="color:#1e293b;font-size:15px;margin-top:16px;">10.37.1 核心特性与架构决策</h4>
+  <ul style="color:#334155;line-height:1.6;">
+    <li><strong>方案 A 二级子看板架构</strong>：在「妈妈·孕产档案」下划分子看板切换，顶层保持极简 4 大 Tab，与 <code>currentMother</code> 档案与 <code>gestation_engine</code> 孕周引擎紧密对齐。</li>
+    <li><strong>严谨合理的临床医学标准</strong>：严格遵循《妊娠期高血压疾病诊治指南》与《妊娠期高血糖诊治指南(2021)》，血压区分正常/偏高/轻度预警/重度危象警报（>=160/110 mmHg），血糖覆盖空腹（3.1~5.1）、餐后1h（<10.0）、餐后2h（<8.5，目标 4.4~6.7）、睡前与随机 5 大场景，动态自适应孕期与非孕期标准。</li>
+    <li><strong>部分录入与完备度说明</strong>：解除全字段必填限制，支持单录体重、单录血压、单录血糖或组合录入；未录入数据在看板与明细中给出明确展示说明。</li>
+    <li><strong>同日多次打卡无损合并</strong>：支持 409 友好提示与 <code>overwrite=true</code> 字段级增量合并。</li>
+    <li><strong>双通道 AI 解读与生活方式处方</strong>：结合完备度与历史趋势生成结构化报告，提供 DASH 低钠与低 GI 饮食指南，外部 AI 故障时秒级降级至本地医学知识库。</li>
+    <li><strong>ECharts 走势与批量管理</strong>：时序双轴走势带临床警戒虚线，历史明细支持分页、单条/批量删除与确认弹窗。</li>
+  </ul>
+  <h4 style="color:#1e293b;font-size:15px;margin-top:12px;">10.37.2 验证结果</h4>
+  <ul style="color:#334155;line-height:1.6;">
+    <li>Vite 前端构建 100% 成功，产物自动同步至 Django <code>static/</code> 与 <code>templates/</code>；</li>
+    <li>Django <code>manage.py check</code> 0 警告 0 错误；</li>
+    <li>单体单进程服务端口 5173 正常监听，生命体征录入、时序获取、AI 分析与 CSV 导入端到端验证通过。</li>
+  </ul>
+</div>
+
+
+<div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:24px;margin-bottom:24px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+  <h3 style="color:#0f172a;font-size:18px;margin-bottom:12px;border-bottom:2px solid #3b82f6;padding-bottom:8px;">10.38 妈妈健康中心体验深化与功能对等重构（v1.76）</h3>
+  <p style="color:#475569;font-size:14px;line-height:1.6;">深化健康打卡按钮智能情景适配、CSV 专属三向分流、测量日期动态联动重算与档案溯源、以及体重/BMI 与血压血糖互补折叠卡对等扩展，彻底解决字段混杂与场景不匹配痛点。</p>
+  <h4 style="color:#1e293b;font-size:15px;margin-top:16px;">10.38.1 核心重构与对等架构</h4>
+  <ul style="color:#334155;line-height:1.6;">
+    <li><strong>健康打卡智能适配与校验解耦</strong>：BMI 子页面聚焦体重身高，血压血糖模块默认收缩；血压血糖子页面打卡按钮自适应为“记录血压/血糖”，体重腹围模块默认收缩；顶部双标签快速切换，仅校验当前活动模块。</li>
+    <li><strong>CSV 导入三向专属分流与独立模板</strong>：精准分流为 <code>mom_bmi</code>、<code>mom_vitals</code> 与 <code>baby</code>，提供专属中英文 CSV 模板，列校验精准对应，后端 API 无损兼容。</li>
+    <li><strong>测量日期动态联动推算与档案溯源</strong>：选择测量日期后自动调用 <code>computeGestation</code> / <code>autoPostpartumMonths</code> 毫秒级重算孕周天数与产后月数，显式渲染来源档案徽章并支持多宝基准切换。</li>
+    <li><strong>体重/BMI 模块互补选填折叠卡</strong>：在 <code>BmiFormCard</code> 底部新增血压、血糖、伴随症状与生活备忘折叠卡，提交时全量打包归档至后端生命体征库。</li>
+  </ul>
+  <h4 style="color:#1e293b;font-size:15px;margin-top:12px;">10.38.2 验证结果</h4>
+  <ul style="color:#334155;line-height:1.6;">
+    <li>Vite 5 构建与 TypeScript 编译 100% 成功，产物同步至 <code>static/</code> 与 <code>templates/</code>；</li>
+    <li>服务通过 <code>run.ps1 restart</code> 平滑重启并正常运行 (PID: 6988，端口 5173，HTTP 200)；</li>
+    <li>单元逻辑与体征完备度评估 100% 通过。</li>
+  </ul>
+</div>
+
 </body>
 
 </html>

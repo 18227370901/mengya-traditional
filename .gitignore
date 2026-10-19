@@ -58,3 +58,6 @@ nginx/ssl/*
 *.swp
 *~
 *.bak
+
+# 根目录临时参考图片
+/*.jpeg

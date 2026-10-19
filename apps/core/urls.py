@@ -47,6 +47,8 @@ urlpatterns = [
     path("products/compare/", views.ProductCompareView.as_view(), name="product-compare"),
     path("products/compare/radar/", views.CompareRadarView.as_view(), name="compare-radar"),
     path("health/bmi-analysis/", views.HealthBmiAnalysisView.as_view(), name="health-bmi-analysis"),
+    path("health/vitals-analysis/", views.HealthVitalsAnalysisView.as_view(), name="health-vitals-analysis"),
+    path("health/vitals-ai-analyze/", views.HealthVitalsAiAnalysisView.as_view(), name="health-vitals-ai-analyze"),
     path("admin/searxng-config/", views_searxng.AdminSearXNGConfigView.as_view(), name="admin-searxng-config"),
     path("admin/searxng-config/test/", views_searxng.AdminSearXNGConfigTestView.as_view(), name="admin-searxng-config-test"),
     # v1.73 外部接口服务配置（天气/节假日/AI公网搜索引擎管线）
