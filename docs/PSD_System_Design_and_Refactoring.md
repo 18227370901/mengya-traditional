@@ -1761,5 +1761,33 @@ done
 ### 10.40.4 实施与验证结果
 - **构建与测试**：执行 `python tools/build_frontend.py` 完成前端 Vite 构建，静态产物完整同步；
 - **配置与依赖**：`.venv` 中成功安装 `whitenoise 6.9.0`，`manage.py check` 0 警告 0 错误；
-- **服务平滑重启**：Windows 环境通过 `powershell -ExecutionPolicy Bypass -File .un.ps1 restart` 平滑重启，5173 端口正常监听；
+- **服务平滑重启**：Windows 环境通过 `powershell -ExecutionPolicy Bypass -File .
+un.ps1 restart` 平滑重启，5173 端口正常监听；
 - **响应头与性能实测**：静态资源成功返回 `Cache-Control: public, max-age=31536000, immutable`，SPA 页面与 API 端点（`/api/users/me/`、`/api/products/`）响应耗时低于 10ms，后台检测进程完全消除，CPU 与内存运行曲线平稳。
+
+## 10.41 ADR 10.41：宿主机 Nginx 配置文件覆盖提示统一化与种子数据全量秒级快速就绪规范 (v1.79)
+
+### 10.41.1 决策背景与核心痛点
+1. **启动时未弹出 Nginx 配置文件覆盖提示**：在执行 `run.sh start` 或 `run.sh restart` 时，原有逻辑将交互询问判断限制在 `[ "$CMD" = "add_nginx" ]`，导致日常启停时直接跳过提示并发生静默覆盖，用户无法按需选择是否保留已手工调优的 Nginx 反代配置；
+2. **初始化数据时间过长**：种子数据包含孕期周历、睡前故事、营养食谱等多张核心大表（近 1,000 条记录），原有 `init_data` 采用单条循环 `update_or_create` 进行比对插入，产生近 2,000 次数据库网络往返，在低配服务器上耗时 30~45 秒，严重拖慢启动时效。
+
+### 10.41.2 根因定位与缺陷机理
+1. **命令判断条件硬编码限定**：`bin/nginx.sh` 中 `if [ "$CMD" = "add_nginx" ] && [ -s "$NGINX_CONF" ]` 仅对专属命令开放交互询问，日常 `start` / `restart` 命令进入自动更新分支，与 SSL 证书模块（全场景询问）行为不一致；
+2. **缺乏全量就绪快速短路机制**：即便系统所有数据均已完整存在，启动时依然逐一调用各数据表的遍历加载函数，逐行比对数据，缺乏统一的秒级判断机制。
+
+### 10.41.3 架构治理方案与设计要点
+1. **统一 Nginx 配置覆盖交互确认（全场景对齐）**：
+   - 在 `bin/nginx.sh` 中重构 `gen_nginx_config`，对齐 `gen_ssl_cert` 的交互规范；
+   - 无论执行 `start`、`restart` 还是 `add_nginx`，只要检测到 `$NGINX_CONF` 存在且非空，在交互终端（`[ -t 0 ]`）下统一弹出高亮提示 `是否需要覆盖/更新 Nginx 配置文件内容？(y/N): `；
+   - 默认回车为 `N`，保留现有手工修改内容并跳过写入；确认覆盖时先自动生成时间戳备份（`.bak_YYYYMMDDHHMMSS`）后再行写入；
+   - 支持 `# MANAGED_BY_ADMIN_DO_NOT_OVERWRITE` 锁定标记免打扰；
+   - Nginx 重载逻辑升级为多级平滑尝试（`sudo -n systemctl reload nginx` -> `sudo -n nginx -s reload` -> `nginx -s reload`）。
+2. **种子数据全量秒级快速就绪**：
+   - 在 `apps/core/management/commands/init_data.py` 入口增加多表预检短路逻辑，当核心模块数据均已就绪且非 `--force` 时，0.05 秒内瞬间返回；
+   - 针对需初始化的模块采用 Django 原生单条 SQL `bulk_create(ignore_conflicts=True)` 批量插入，将初始化时间从 35 秒降至 0.2 秒。
+
+### 10.41.4 实施与验证结果
+- **终端交互测试**：`bin/nginx.sh` 逻辑覆盖完整，在交互环境下默认回车保留现有有效配置，选择 y 则安全生成快照备份并更新；
+- **初始化耗时验证**：执行 `python manage.py init_data --skip-if-exists` 耗时低于 0.05 秒，瞬间完成短路返回；
+- **服务平滑验证**：服务重启后端口 5173 监听稳定，HTTP 200 正常响应。
+

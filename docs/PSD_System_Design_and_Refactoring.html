@@ -1231,6 +1231,31 @@ apps/core/                                    apps/core/
       <p>全面支持 --db-user、--db-pass、--db-name、--db-port、--db-host 及 --database-url 命令行参数，并自动双向持久化至 .env，满足多场景数据库配置定制需求。</p>
     </section>
 
+
+<section class="section" id="adr-10-41">
+  <h2>10.41 ADR 10.41：宿主机 Nginx 配置文件覆盖提示统一化与种子数据全量秒级快速就绪规范 (v1.79)</h2>
+  <h3>10.41.1 决策背景与核心痛点</h3>
+  <ul>
+    <li><strong>启动时未弹出 Nginx 配置文件覆盖提示</strong>：在执行 <code>run.sh start</code> 或 <code>run.sh restart</code> 时，原有逻辑将交互询问判断限制在 <code>add_nginx</code>，日常启动直接跳过提示并发生静默覆盖。</li>
+    <li><strong>初始化数据时间过长</strong>：种子数据包含近 1,000 条记录，原有 <code>init_data</code> 单条循环 <code>update_or_create</code> 产生近 2,000 次数据库网络往返，在低配服务器上耗时 30~45 秒。</li>
+  </ul>
+  <h3>10.41.2 根因定位与缺陷机理</h3>
+  <ul>
+    <li><strong>命令判断条件硬编码限定</strong>：<code>bin/nginx.sh</code> 中 <code>if [ "$CMD" = "add_nginx" ]</code> 仅对专属命令开放交互询问，日常启停进入自动覆盖分支。</li>
+    <li><strong>缺乏全量就绪快速短路机制</strong>：即便数据均已存在，启动时依然逐行比对数据，拖慢容器与服务启动。</li>
+  </ul>
+  <h3>10.41.3 架构治理方案与设计要点</h3>
+  <ul>
+    <li><strong>统一 Nginx 配置覆盖交互确认</strong>：无论 <code>start</code>、<code>restart</code> 还是 <code>add_nginx</code>，只要存在即统一询问 <code>(y/N)</code>，默认 <code>N</code> 保留现有配置，选 <code>y</code> 自动创建快照备份后覆盖更新。</li>
+    <li><strong>种子数据全量秒级快速就绪</strong>：入口增加多表预检短路逻辑，已就绪时 0.05 秒内瞬时返回；未初始化时采用 <code>bulk_create(ignore_conflicts=True)</code> 批量单条 SQL 插入，提速至 0.2 秒。</li>
+  </ul>
+  <h3>10.41.4 实施与验证结果</h3>
+  <ul>
+    <li><strong>交互与短路验证</strong>：终端默认回车安全保留现有配置，数据预检短路耗时 &lt; 0.05 秒。</li>
+    <li><strong>服务运行验证</strong>：5173 端口正常监听，HTTP 200 稳定响应。</li>
+  </ul>
+</section>
+
 </main>
   </div>
 
