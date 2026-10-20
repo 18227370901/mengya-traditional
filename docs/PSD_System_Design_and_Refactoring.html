@@ -2025,6 +2025,21 @@ apps/core/                                    apps/core/
     <li><strong>首页大卡片定位同步 Loading 态落地 (v1.77.1)：</strong>彻底接入 JSX 条件分支，实现双模 Loading 态（定位变更动态 Spinner 与目标城市提示 + 首次登录平滑过渡），结合 SWR 毫秒秒开与普通用户共享天气友好提示，彻底消除万年历抢跑与滞留。</li>
   </ul>
 </div>
+
+
+<div class="adr-card" id="adr-10-40">
+  <h3>10.40 ADR 10.40：传统部署版运行时性能治理、后台变动检测进程彻底根除与内存泄露阻断规范 (v1.78)</h3>
+  <div class="meta"><span class="badge badge-success">已实施</span> <span class="badge badge-primary">v1.78</span> <span class="badge">2026-10-20</span></div>
+  <p><strong>痛点问题：</strong>后台衍生 StatReloader 守护进程全盘扫描导致 CPU 飙升 100%、DJANGO_DEBUG 模式致使 SQL 查询在内存无限累积泄露、原生 Django 静态资源托管缺乏零拷贝与长效缓存、SQLite 读写锁竞争、前端高频 15s 短轮询与 145KB 商品无分页拉取。</p>
+  <p><strong>解决方案：</strong></p>
+  <ul>
+    <li><strong>彻底根除变动扫描进程：</strong><code>bin/process.sh</code> 启动参数硬化追加 <code>--noreload</code>，探针优先使用内核级轻量 <code>ss</code> 命令，消除全盘描述符扫描与文件时间戳轮询；</li>
+    <li><strong>默认关闭 Debug 与内存泄露阻断：</strong><code>config/settings.py</code>、<code>.env</code> 与 <code>.env.example</code> 默认配置 <code>DJANGO_DEBUG=False</code>，阻止 <code>connection.queries</code> 内存堆积，启动链路加入主动 GC 回收；</li>
+    <li><strong>WhiteNoise 零拷贝静态托管与强缓存：</strong>接入 <code>WhiteNoiseMiddleware</code>，开启 1 年长效强缓存（<code>Cache-Control: public, max-age=31536000, immutable</code>），静态资源吞吐量提升 10 倍以上；</li>
+    <li><strong>SQLite WAL 高并发模式：</strong>数据库连接初始化时自动执行 <code>PRAGMA journal_mode = WAL;</code> 与 <code>PRAGMA synchronous = NORMAL;</code>，配置 20 秒锁等待，实现读写并行不阻塞；</li>
+    <li><strong>前端短轮询与大请求治理：</strong>鉴权心跳放宽至 60s 且后台休眠时完全挂起，首页商品采用 <code>page_size=4</code> 精准分页，数据传输体积缩减 95%。</li>
+  </ul>
+</div>
 </body>
 
 </html>

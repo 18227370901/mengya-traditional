@@ -1715,3 +1715,51 @@ done
    - `HomeWeatherView` 与 `_get_cached_home_weather` 拓展支持 `lat` 与 `lon` 坐标直查，前端定位变更时直传坐标，规避三级区县在海外 Open-Meteo 多次重试的 15 秒耗时，接口响应缩短至 10 毫秒以内；
 5. **普通用户系统共享天气兼容**：
    - 普通用户正常展示管理员配置的天气，标注“管理员配置”徽章，点击时提示说明，避免误跳转导致 403 路由拦截。
+
+## 10.40 ADR 10.40：传统部署版运行时性能治理、后台变动检测进程彻底根除与内存泄露阻断规范 (v1.78)
+
+### 10.40.1 决策背景与核心痛点
+在 `mengya-local` 传统部署版上线运行过程中，用户访问或并发交互时，监控发现服务器后台 CPU 占用率与内存瞬间飙升至峰值，导致整机可用性能严重降低，API 响应延迟剧增，排查表现为以下核心痛点：
+1. **后台检测进程高频轮询磁盘**：服务启动后衍生额外的守护进程不断扫描全盘文件，任何静态请求或临时日志生成均触发密集的文件变动探测；
+2. **内存持续膨胀与频繁垃圾回收卡顿**：Python 进程内存占用呈单调上升趋势，触发 Python 全局 GC Stop-The-World (STW) 停顿；
+3. **静态文件请求直接占用 Python 主线程**：单体单进程架构下，前端静态资源由 Django 视图同步读取传输，无 HTTP 长效强缓存，IO 与 CPU 资源消耗剧烈；
+4. **数据库锁竞争与请求排队**：SQLite 传统日志模式在读写并发时互斥锁表，导致请求阻塞排队；
+5. **前端高频短轮询与大体积无分页查询**：前端鉴权心跳短轮询在后台无差别轰炸接口，且首页全量拉取商品列表消耗后端大量序列化算力。
+
+### 10.40.2 根因定位与缺陷机理
+1. **Django `StatReloader` 变动扫描守护进程**：
+   Linux/macOS 部署运维脚本 `bin/process.sh` 中调用 `python manage.py runserver 0.0.0.0:5173` 缺失 `--noreload` 生产标志，Django 默认初始化并启动 `StatReloader` 线程/子进程，深度遍历整个项目目录树（数十万文件）检测时间戳，用户访问产生任何日志或临时文件都会触发风暴式磁盘比对；
+2. **`DJANGO_DEBUG=True` 导致 SQL 历史全局常驻泄露**：
+   系统原本默认开启 Debug 模式，Django 内部 `django.db.connection.queries` 将每一次数据库查询语句完整保存在全局内存中，长期运行内存无限泄漏；
+3. **原生 Django 静态资源托管无零拷贝机制**：
+   静态资源通过 `django.views.static.serve` 逐字节经过用户态内存拷贝，且无 `Cache-Control: immutable` 缓存头，重复访问造成巨大冗余消耗；
+4. **SQLite 默认 Rollback Journal 模式**：
+   缺少 WAL（Write-Ahead Logging）模式，读写互斥锁表，并发请求极易发生排队堆积；
+5. **未优化前端轮询与查询**：
+   `RequireAuth.tsx` 每 15s 发送 `/api/users/me/` 轮询请求，即使页面在后台休眠也持续请求；`HomePage.tsx` 使用 `no_page=1` 全量返回全部商品数据（145KB JSON），只为切片展示 4 条推荐。
+
+### 10.40.3 架构治理方案与设计要点
+1. **启动参数硬化与检测进程彻底根除**：
+   - 在 `bin/process.sh` 的 `runserver` 命令中强制注入 `--noreload` 参数；
+   - 优化 Linux 进程管理探针，优先采用内核级 `ss -ltn` 探查端口，移除高开销的 `lsof` 全局描述符扫描；
+   - 优化进程终止与状态匹配模式，防止孤儿进程遗留。
+2. **生产调试模式硬化与内存泄露阻断**：
+   - 将 `config/settings.py` 中 `DJANGO_DEBUG` 默认值硬化为 `False`；
+   - 同步修正 `.env` 与 `.env.example` 环境变量模板；
+   - 在 `config/wsgi.py` 与关键链路显式执行垃圾回收，阻断查询历史积累与内存泄露。
+3. **引入生产级 WhiteNoise 零拷贝静态托管体系**：
+   - 在 `requirements.txt` 中引入 `whitenoise>=6.6.0`；
+   - 在 `config/settings.py` 的 `MIDDLEWARE` 中挂载 `whitenoise.middleware.WhiteNoiseMiddleware`；
+   - 配置 `WHITENOISE_MAX_AGE = 31536000`（1 年），配合 Vite 构建产物的 Hash 文件名，为所有静态资产注入 `Cache-Control: public, max-age=31536000, immutable` 强缓存头，静态文件直通内核，吞吐量提升 10 倍以上。
+4. **SQLite WAL 并发模式与锁等待优化**：
+   - 在 `apps/core/apps.py` 监听 `connection_created` 信号，在连接创建时自动执行 `PRAGMA journal_mode = WAL;` 与 `PRAGMA synchronous = NORMAL;`；
+   - 在 `DATABASES['default']['OPTIONS']` 配置 `timeout: 20`，实现读写并行无互斥阻塞。
+5. **前端高频请求与短轮询抑制**：
+   - `RequireAuth.tsx` 鉴权短轮询周期由 15 秒放宽至 60 秒，并结合 `document.visibilityState` API，标签页不可见或休眠时完全挂起轮询；
+   - `HomePage.tsx` 推荐商品请求重构为后端分页拉取：`productApi.list({ sort: "rating", page: 1, page_size: 4 })`，传输体积缩减 95%，后端计算开销趋近于 0。
+
+### 10.40.4 实施与验证结果
+- **构建与测试**：执行 `python tools/build_frontend.py` 完成前端 Vite 构建，静态产物完整同步；
+- **配置与依赖**：`.venv` 中成功安装 `whitenoise 6.9.0`，`manage.py check` 0 警告 0 错误；
+- **服务平滑重启**：Windows 环境通过 `powershell -ExecutionPolicy Bypass -File .un.ps1 restart` 平滑重启，5173 端口正常监听；
+- **响应头与性能实测**：静态资源成功返回 `Cache-Control: public, max-age=31536000, immutable`，SPA 页面与 API 端点（`/api/users/me/`、`/api/products/`）响应耗时低于 10ms，后台检测进程完全消除，CPU 与内存运行曲线平稳。

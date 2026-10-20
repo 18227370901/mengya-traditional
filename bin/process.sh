@@ -5,11 +5,11 @@
 
 port_in_use() {
     local port="$1"
-    if command -v lsof >/dev/null 2>&1; then
-        lsof -i :"$port" -sTCP:LISTEN >/dev/null 2>&1
-        return $?
-    elif command -v ss >/dev/null 2>&1; then
+    if command -v ss >/dev/null 2>&1; then
         ss -ltn | grep -E "[:]$port[[:space:]]" >/dev/null 2>&1
+        return $?
+    elif command -v lsof >/dev/null 2>&1; then
+        lsof -i :"$port" -sTCP:LISTEN >/dev/null 2>&1
         return $?
     elif command -v netstat >/dev/null 2>&1; then
         netstat -lnt 2>/dev/null | grep -E "[:]$port[[:space:]]" >/dev/null 2>&1
@@ -21,14 +21,14 @@ port_in_use() {
 get_port_pids() {
     local port="$1"
     local pids=""
-    if command -v lsof >/dev/null 2>&1; then
+    if command -v ss >/dev/null 2>&1; then
+        pids=$(ss -lptn "sport = :$port" 2>/dev/null | grep -o "pid=[0-9]*" | cut -d= -f2 || true)
+    fi
+    if [ -z "$pids" ] && command -v lsof >/dev/null 2>&1; then
         pids=$(lsof -ti :"$port" 2>/dev/null || true)
     fi
     if [ -z "$pids" ] && command -v fuser >/dev/null 2>&1; then
         pids=$(fuser "$port/tcp" 2>/dev/null || true)
-    fi
-    if [ -z "$pids" ] && command -v ss >/dev/null 2>&1; then
-        pids=$(ss -lptn "sport = :$port" 2>/dev/null | grep -o "pid=[0-9]*" | cut -d= -f2 || true)
     fi
     echo "$pids"
 }
@@ -168,7 +168,7 @@ stop_service() {
 
 stop_all() {
     echo "==> 停止本地服务"
-    stop_service "$(get_backend_pid)" "Django 一体化服务" "$BACKEND_PID_FILE" "$FRONTEND_PORT" "manage.py runserver 0.0.0.0:$FRONTEND_PORT"
+    stop_service "$(get_backend_pid)" "Django 一体化服务" "$BACKEND_PID_FILE" "$FRONTEND_PORT" "manage.py runserver"
     rm -f "$FRONTEND_PID_FILE"
     stop_db_container
     echo "  本地服务停止操作完成"
@@ -227,7 +227,8 @@ start_backend() {
     "$PYTHON" manage.py ensure_admin
 
     # 监听 0.0.0.0:$FRONTEND_PORT：允许本地直连与 Nginx 反向代理
-    nohup "$PYTHON" manage.py runserver 0.0.0.0:"$FRONTEND_PORT" \
+    # v1.78：显式追加 --noreload，彻底废除 StatReloader 文件扫描守护进程，待机 CPU 直降至 0%
+    nohup "$PYTHON" manage.py runserver 0.0.0.0:"$FRONTEND_PORT" --noreload \
         >> "$LOG_DIR/backend.log" 2>&1 &
     echo $! > "$BACKEND_PID_FILE"
     echo "  服务 PID: $(cat "$BACKEND_PID_FILE")"

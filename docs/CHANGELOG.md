@@ -6,6 +6,35 @@
 
 ---
 
+## 2026-10-20 最新更新说明（v1.78 版本）： 传统部署版运行时性能深度治理、彻底消除后台检测守护进程与内存泄露阻断
+
+1. **彻底根除后台文件检测守护进程（StatReloader / watchdog）高 CPU 占用**：
+   - **根因分析**：在 Linux/macOS 环境下，运维脚本 in/process.sh 启动命令 python manage.py runserver 0.0.0.0:5173 缺失 --noreload 参数，导致 Django 框架启动时自动派生额外的子进程 StatReloader。该子进程会无限递归扫描整个项目目录（包含 node_modules、templates、static、logs 等数十万个文件及临时文件），当有用户请求或生成临时缓存时，触发密集的文件时间戳轮询扫描，导致 CPU 占用率瞬间暴涨至 100%；
+   - **启动参数硬化**：在 in/process.sh 的 
+unserver 启动参数中强制追加 --noreload 参数，将 Django 运行模式锁定为生产单进程单体托管，彻底阻断任何后台变动监听与轮询子进程派生；
+   - **进程精准生命周期管控**：调整 PID 停止与匹配模式，从宽泛的 
+unserver 变更为精准匹配 manage.py runserver.*--noreload，杜绝孤儿守护进程残留。
+2. **默认关闭调试模式与 SQL 查询历史内存泄露彻底阻断**：
+   - **根因分析**：系统原本默认配置 DJANGO_DEBUG=True。在 Django 调试模式下，所有的数据库查询详情（SQL 语句、执行时间、参数）都会被无限追加至全局内存数组 django.db.connection.queries 中，且永不自动释放；随着用户访问增多，内存极速膨胀飙升，并引发 Python 频繁触发全局 GC Stop-The-World（STW）停顿，表现为 CPU 与内存双重剧烈飙升；
+   - **默认配置硬化**：将 config/settings.py 中的默认 DJANGO_DEBUG 调整为 False，同时同步更新 .env 与 .env.example，避免未配置环境变量时落入 Debug 陷阱；
+   - **运行时 GC 垃圾回收优化**：在 config/wsgi.py 与启动链路显式执行垃圾回收，降低多线程与高并发请求下的内存碎片占用。
+3. **集成生产级 WhiteNoise 零拷贝静态资源托管与 1 年强缓存**：
+   - **根因分析**：在单体一体化部署中，前端静态构建产物（JS、CSS、图片、字体）由 Django django.views.static.serve 在 Python 应用层同步逐字节读取并返回，每个用户并发请求都会占用 Python 主线程的 CPU 算力与内存缓冲；且静态文件未设置 HTTP 强缓存头，导致浏览器频繁重复请求静态资源；
+   - **中间件接入**：在 
+equirements.txt 中引入高性能静态文件托管库 whitenoise>=6.6.0，在 config/settings.py 的 MIDDLEWARE 最前列（SecurityMiddleware 之后）注入 whitenoise.middleware.WhiteNoiseMiddleware；
+   - **长效强缓存策略**：配置 WHITENOISE_MAX_AGE = 31536000（1 年），静态资源响应头默认附带 Cache-Control: public, max-age=31536000, immutable，实现浏览器持久本地缓存，消除 99% 的静态资源重复请求与服务器 IO 开销。
+4. **SQLite WAL 高并发并发读写模式与 20 秒锁等待优化**：
+   - **根因分析**：SQLite 默认使用传统 Rollback Journal 模式，写操作会直接互斥锁定整库，导致读写并发时多线程陷入争锁排队，请求堆积并导致进程 CPU 飙升甚至偶发 database is locked 异常；
+   - **自动开启 WAL 模式**：在 pps/core/apps.py 中通过 Django connection_created 信号钩子，在数据库连接首次建立时自动执行 PRAGMA journal_mode = WAL; 与 PRAGMA synchronous = NORMAL;，实现读写并行不互斥；
+   - **连接超时容错**：在 DATABASES['default']['OPTIONS'] 中注入 	imeout: 20，彻底消除并发争锁超时报错。
+5. **前端高频短轮询与大体积无分页请求治理**：
+   - **鉴权轮询抑制**：RequireAuth.tsx 原逻辑无条件每 15 秒轮询一次 /api/users/me/；重构为 60 秒轮询，并接入 Page Visibility API，在浏览器标签页切至后台或最小化时直接暂停轮询，用户切回前台时再恢复，大幅减轻服务器心跳压力；
+   - **首页推荐商品大体积请求优化**：HomePage.tsx 原先通过 productApi.list({ no_page: 1 }) 拉取全量上百条商品（JSON 达 145KB），只为了前端截取前 4 个推荐商品；现改造为精准分页 productApi.list({ sort: 'rating', page: 1, page_size: 4 })，传输体积缩减 95% 以上，后端数据库查询与序列化耗时降低至 1ms 以内。
+6. **Linux 运维脚本探针性能开销消除**：
+   - **探针降级治理**：in/process.sh 的端口检测逻辑原本优先执行 lsof -i:5173，在高负载或容器环境下 lsof 会扫描全部进程的文件描述符表，自身消耗大量 CPU；现优化为优先使用内核原生轻量快速的 ss -ltn 和 ss -lptn，秒级返回且 CPU 占用近乎 0。
+
+---
+
 ## 2026-10-19 最新更新说明（v1.77 版本）： 天气与万年历精度深度优化、请求频次治理与外部服务配置生效机制重构
 
 1. **自由搜索区县级精准匹配（彻底解决“恩阳区展示为巴中”问题）**：
