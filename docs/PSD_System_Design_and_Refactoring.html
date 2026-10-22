@@ -2161,6 +2161,23 @@ apps/core/                                    apps/core/
     <li><strong>SQLite WAL 高并发模式：</strong>数据库连接初始化时自动执行 <code>PRAGMA journal_mode = WAL;</code> 与 <code>PRAGMA synchronous = NORMAL;</code>，配置 20 秒锁等待，实现读写并行不阻塞；</li>
     <li><strong>前端短轮询与大请求治理：</strong>鉴权心跳放宽至 60s 且后台休眠时完全挂起，首页商品采用 <code>page_size=4</code> 精准分页，数据传输体积缩减 95%。</li>
   </ul>
+
+    <div class="adr-card">
+      <div class="adr-header">
+        <span class="adr-badge">ADR 10.46</span>
+        <span class="adr-title">健康数据 CSV 批量导入全链路韧性重构、GBK/ANSI 多编码智能探测、孕周自动识别修正与跨阶段交互闭环规范 (v1.84)</span>
+      </div>
+      <div class="adr-body">
+        <p><strong>决策背景</strong>：健康中心批量导入存在 Windows Excel ANSI/GBK 编码解析乱码、孕周未填或填错导致被严格产检时序阻断丢弃，以及阶段不一致确认时交互断裂（点击后黄框消失但页面无反应）三大缺陷。</p>
+        <p><strong>核心架构治理</strong>：</p>
+        <ul>
+          <li><strong>双编码自适应探测</strong>：<code>FileReader.readAsArrayBuffer</code> + strict UTF-8 优先解码，遇到非法字符平滑回退至 <code>gb18030</code>，安全剥离 Unicode BOM，彻底杜绝乱码；</li>
+          <li><strong>三级孕周自愈引擎</strong>：基于「当前妈妈档案预产期 > 历史打卡锚点 > 批次有效锚点」推算，未填孕周自动识别补齐，离谱孕周自动校正为医学理论值；</li>
+          <li><strong>跨阶段协议与交互全闭环</strong>：扩充 <code>stage_mode</code> 与 <code>allow_cross_stage</code> 豁免时序硬性拦截；执行中显示 Loading，成功自动弹出 Toast 并关闭弹窗，异常自动平滑滚动聚焦明细看板。</li>
+        </ul>
+      </div>
+    </div>
+
 </div>
 </body>
 
