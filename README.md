@@ -11,7 +11,7 @@
 
 > **面向新一代母婴家庭的全生命周期（备孕、孕期、育儿）健康陪伴、知识百科、消费决策与智能顾问一体化平台**。专为开发者日常本地调试、源码热重载开发及无 Docker 环境的轻量化主机部署深度定制。
 >
-> 📌 **当前版本**：`v1.85` | 📖 **[查看全量版本演化与发布历史 (docs/CHANGELOG.md)](docs/CHANGELOG.md)**
+> 📌 **当前版本**：`v1.86` | 📖 **[查看全量版本演化与发布历史 (docs/CHANGELOG.md)](docs/CHANGELOG.md)**
 
 <!-- 
   【AI 协作与维护规范 - 严禁违背】
@@ -45,6 +45,10 @@
 3. 👶 **全生命周期健康与育儿陪伴**
    - 涵盖备孕、孕期 1~40 周胎儿发育、妈妈体重/BMI 监测、血压/血糖生命体征智能分析、幼儿生长曲线（WHO 标准）、产检与疫苗智能日历；
    - 结合大语言模型与 SearXNG / 公网多引擎容灾管线，提供智能育儿顾问、胎教故事及母婴商品多维对比雷达。
+4. 🛡️ **WebDAV 云端热备与全量系统容灾体系**
+   - 支持坚果云、群晖、Nextcloud、Alist 等 WebDAV 在线热原子备份与 AES-256 高强度加密；
+   - 全量覆盖全部 37 张业务与管理数据表、`SystemSetting` 基础配置、离线缓存与用户媒体附件；
+   - 内置安全回滚副本强制保留（`logs/db_rollback_pre_restore_*.db`）、完整性校验与轻量 Cron 定时调度。
 
 ---
 
@@ -106,7 +110,7 @@ mengya-local/
 ├── docs/                              # 📁 [文档中心] 统一管理架构设计、HTML视图与发布日志
 │   ├── PSD_System_Design_and_Refactoring.md   # 系统设计与重构权威决策规范
 │   ├── PSD_System_Design_and_Refactoring.html # 架构设计离线 HTML 交互视图 (Mermaid)
-│   └── CHANGELOG.md                           # 全量版本演化与历史变更日志 (v1.13~v1.85+)
+│   └── CHANGELOG.md                           # 全量版本演化与历史变更日志 (v1.13~v1.86+)
 │
 ├── tools/                             # 📁 [工具中心] 归集非线上常驻的本地开发调试脚本
 │   ├── build_frontend.py              # 前端一键构建与静态产物同步脚本 (Path两级回退)
@@ -128,7 +132,7 @@ mengya-local/
 深入了解系统架构决策、全版本演化或运维深度定制，请参阅 `docs/` 目录下的专有文档：
 
 - 📐 **[PSD 架构设计与重构决策文档 (docs/PSD_System_Design_and_Refactoring.md)](docs/PSD_System_Design_and_Refactoring.md)**：包含系统全景技术栈审计、三大数据库部署模式自适应与 6 种物理隔离矩阵、前后台完整设计规格及 ADR-01~36 全部重构决策（另备有含完整图表的 [HTML 交互版](docs/PSD_System_Design_and_Refactoring.html)）；
-- 📜 **[全量版本演化与更新日志 (docs/CHANGELOG.md)](docs/CHANGELOG.md)**：记录自 v1.13 至 v1.85 全部迭代历史、缺陷修复与详细技术升级公告；
+- 📜 **[全量版本演化与更新日志 (docs/CHANGELOG.md)](docs/CHANGELOG.md)**：记录自 v1.13 至 v1.86 全部迭代历史、缺陷修复与详细技术升级公告；
 - 🤖 **[AI 协作与跨工具维护规范 (AGENTS.md)](AGENTS.md)**：约束 Codex、Cursor、Claude Code、Windsurf 等各类 AI 工具严守极简自述与文档分流铁律。
 
 ---

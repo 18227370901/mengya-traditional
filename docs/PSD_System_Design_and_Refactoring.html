@@ -2196,6 +2196,27 @@ apps/core/                                    apps/core/
       </div>
     </div>
 
+    <div class="adr-card">
+      <div class="adr-header">
+        <span class="adr-badge">ADR 10.48</span>
+        <span class="adr-title">WebDAV 云端热备、全量37+表数据与系统基础配置快照打包、AES-256 加密与安全回滚保护式容灾恢复规范 (v1.86)</span>
+      </div>
+      <div class="adr-body">
+        <p><strong>决策背景</strong>：单体一体化部署下，系统数据不仅包含核心 SQLite 关系型数据库，还涵盖平台全局系统配置（<code>SystemSetting</code> 注册模式、锁定时长等）、运行时离线数据（<code>data/</code> 节假日缓存）及多媒体附件（<code>media/</code> 头像相册等）。此前缺乏与外部网盘（坚果云、群晖、Nextcloud、Alist 等）对接的自动化灾备通道，一旦遭遇磁盘损坏或误操作，缺乏全量恢复与安全回滚保障。参考 gift 项目的 WebDAV 能力，需为萌芽平台定制一套覆盖全量数据与基础配置、支持 AES-256 加密与定时调度的容灾备份体系。</p>
+        <p><strong>核心架构治理</strong>：</p>
+        <ul>
+          <li><strong>SQLite 在线热原子快照机制</strong>：采用 Python 原生 <code>sqlite3.backup()</code> API 建立热原子快照，不直接进行文件硬拷贝，彻底杜绝 WAL 缓存未落盘导致的数据不一致与只读锁冲突；</li>
+          <li><strong>全量快照打包模型 (<code>manifest.json</code> + <code>config_snapshot.json</code>)</strong>：全量打包包含 37 张数据表、结构化系统基础安全配置、<code>data/</code> 与 <code>media/</code> 目录，并生成记录 SHA-256 与各表行数的元数据清单；支持 <code>pyzipper</code> AES-256 高强度加密；</li>
+          <li><strong>多层安全防线与回滚自愈机制</strong>：系统在执行替换前，强制将当前主库备份至 <code>logs/db_rollback_pre_restore_*.db</code> 作为安全回滚副本；先经 <code>PRAGMA integrity_check</code> 校验，遇到损坏镜像即刻熔断阻断；覆盖后自动执行迁移补全与凭据延续；</li>
+          <li><strong>轻量 Cron 定时调度线程</strong>：基于纯 Python 标准库解析标准 5 位 Cron 表达式，由 <code>CoreConfig.ready()</code> 在服务运行时激活后台守护线程，自动执行快照上传与日志留存；</li>
+          <li><strong>管理后台交互与离线急救</strong>：前端基于模块化卡片构建 WebDAV 配置、即时备份、云端恢复、离线急救上传与定时任务管理看板。</li>
+          <li><strong>凭据回显与 .db 还原作用域自愈</strong>：后端向授权管理员安全回显应用授权码与预设加密密码，支持眼睛图标明密文切换；修复 <code>restore_system_from_backup</code> 中 <code>config_snapshot_data</code> 变量作用域引发的 <code>UnboundLocalError: 500</code> 报错，保障 <code>.db</code> 与 <code>.zip</code> 全格式 100% 成功恢复。</li>
+          <li><strong>回滚快照生命周期上限治理与 Git 敏感信息防泄露</strong>：数据模型增加 <code>BackupConfig.max_rollback_copies</code>（默认 3 个），自动按时间降序清理超出上限的 <code>logs/db_rollback_pre_restore_*.db</code>，前端提供快照容量看板与手动修剪；<code>.gitignore</code> 强制过滤所有日志回滚数据库；</li>
+          <li><strong>后台功能页面菜单权限体系全量入库与管控打通</strong>：新增 WebDAV 容灾中心、外部接口配置、每日关怀贴士、用户注册模式管控、母婴商品对比等管理菜单与细粒度权限，<code>DEFAULT_USER_PERMISSIONS</code> 中全量管理权限默认赋值为 <code>False</code>，新注册普通用户零越权。</li>
+        </ul>
+      </div>
+    </div>
+
 </div>
 </body>
 
