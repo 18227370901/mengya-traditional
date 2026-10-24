@@ -11,7 +11,7 @@
 
 > **面向新一代母婴家庭的全生命周期（备孕、孕期、育儿）健康陪伴、知识百科、消费决策与智能顾问一体化平台**。专为开发者日常本地调试、源码热重载开发及无 Docker 环境的轻量化主机部署深度定制。
 >
-> 📌 **当前版本**：`v1.86` | 📖 **[查看全量版本演化与发布历史 (docs/CHANGELOG.md)](docs/CHANGELOG.md)**
+> 📌 **当前版本**：`v1.87` | 📖 **[查看全量版本演化与发布历史 (docs/CHANGELOG.md)](docs/CHANGELOG.md)**
 
 <!-- 
   【AI 协作与维护规范 - 严禁违背】
@@ -110,7 +110,7 @@ mengya-local/
 ├── docs/                              # 📁 [文档中心] 统一管理架构设计、HTML视图与发布日志
 │   ├── PSD_System_Design_and_Refactoring.md   # 系统设计与重构权威决策规范
 │   ├── PSD_System_Design_and_Refactoring.html # 架构设计离线 HTML 交互视图 (Mermaid)
-│   └── CHANGELOG.md                           # 全量版本演化与历史变更日志 (v1.13~v1.86+)
+│   └── CHANGELOG.md                           # 全量版本演化与历史变更日志 (v1.13~v1.87+)
 │
 ├── tools/                             # 📁 [工具中心] 归集非线上常驻的本地开发调试脚本
 │   ├── build_frontend.py              # 前端一键构建与静态产物同步脚本 (Path两级回退)
