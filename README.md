@@ -11,7 +11,7 @@
 
 > **面向新一代母婴家庭的全生命周期（备孕、孕期、育儿）健康陪伴、知识百科、消费决策与智能顾问一体化平台**。专为开发者日常本地调试、源码热重载开发及无 Docker 环境的轻量化主机部署深度定制。
 >
-> 📌 **当前版本**：`v1.88.6` | 📖 **[查看全量版本演化与发布历史 (docs/CHANGELOG.md)](docs/CHANGELOG.md)**
+> 📌 **当前版本**：`v1.94` | 📖 **[查看全量版本演化与发布历史 (docs/CHANGELOG.md)](docs/CHANGELOG.md)**
 
 <!-- 
   【AI 协作与维护规范 - 严禁违背】
@@ -54,6 +54,9 @@
    - 74 键 15 组细粒度权限管控，权限分组独立保存，后台菜单按权限动态显隐；
    - 全局收藏状态中心化（类型级批量查询）与 4030 权限拒绝提示结构化两层防线；
    - 权限模板快照固化：修改全局默认模板不再自动覆盖已有用户，仅新注册与手动「重置为系统默认」时固化生效。
+6. ⚡ **全站无刷新异步交互与就地响应（Pure Async SPA）**
+   - 彻底移除数据操作与异常重试时的整页刷新，全面采用局部就地异步重拉；
+   - 知识库、商品品牌、关怀贴士与待产包清单等核心模块单条数据保存、启停上下架与打卡完成采用局部响应式更新（Optimistic / In-place Update），告别全表骨架屏闪烁与滚动条跳动。
 
 ---
 
@@ -74,12 +77,12 @@ powershell -ExecutionPolicy Bypass -File .\run.ps1 restart  # 重启服务 (自�
 powershell -ExecutionPolicy Bypass -File .\run.ps1 stop     # 彻底停止服务并释放端口
 
 # === Linux / macOS 环境 (Bash) ===
-./run.sh start      # 启动服务
-./run.sh status     # 查看状态
-./run.sh restart    # 重启服务
-./run.sh stop       # 停止服务
-./run.sh add_nginx  # 自动签发 SAN 多域名证书并生成 Nginx 反代配置
-./run.sh init_data  # 检查并补齐全量百科、食谱与样例数据
+./run.sh start                            # 启动服务 (默认端口 5173 / HTTPS 443)
+./run.sh start --nginx-port 3443 --local  # 前置代理模式 (监听 127.0.0.1:3443)
+./run.sh status                           # 查看状态与访问入口
+./run.sh restart                          # 重启服务
+./run.sh stop                             # 停止服务
+./run.sh add_nginx                        # 自动签发证书并生成 Nginx 反代配置
 ```
 
 > 服务启动后，打开浏览器访问：**[http://localhost:5173/](http://localhost:5173/)**
@@ -92,6 +95,8 @@ powershell -ExecutionPolicy Bypass -File .\run.ps1 stop     # 彻底停止服务
 | `-P` | `--password` | `admin123` | 自定义管理员登录密码（同步写入 `.env`） |
 | `-n` | `--nickname` | `管理员` | 自定义管理员前台展示昵称 |
 | `-d` | `--domain` | `mengya.local localhost` | 自定义 Nginx 反代 SNI 域名 |
+| - | `--nginx-port` | `443` | 自定义 Nginx 外部对外监听端口（如 3443、8443） |
+| - | `--local` | - | 前置代理模式（仅监听 127.0.0.1 本地回环接口） |
 | `-m` | `--mode` | `sqlite` | 显式指定数据库模式（`sqlite` / `shared` / `dedicated`） |
 | - | `--reconfig` | - | 重新唤起数据库部署模式交互向导 |
 | `--cron` | `--batch` | - | 定时任务模式（全自动免人工介入，应用安全默认策略） |
@@ -115,7 +120,7 @@ mengya-local/
 ├── docs/                              # 📁 [文档中心] 统一管理架构设计、HTML视图与发布日志
 │   ├── PSD_System_Design_and_Refactoring.md   # 系统设计与重构权威决策规范
 │   ├── PSD_System_Design_and_Refactoring.html # 架构设计离线 HTML 交互视图 (Mermaid)
-│   └── CHANGELOG.md                           # 全量版本演化与历史变更日志 (v1.13~v1.88.6+)
+│   └── CHANGELOG.md                           # 全量版本演化与历史变更日志 (v1.13~v1.90+)
 │
 ├── tools/                             # 📁 [工具中心] 归集非线上常驻的本地开发调试脚本
 │   ├── build_frontend.py              # 前端一键构建与静态产物同步脚本 (Path两级回退)

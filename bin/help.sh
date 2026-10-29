@@ -21,6 +21,10 @@ show_cli_help() {
         echo "  -P, --password <PASS>        自定义超级管理员登录密码（默认 admin123）"
         echo "  -n, --nickname <NAME>        自定义管理员昵称（默认 管理员）"
         echo "  -d, --domain <DOMAIN>        自定义绑定的 SNI 域名（默认 mengya.local localhost）"
+        echo "  --local, --front-proxy       前置代理模式: 仅监听 127.0.0.1 (等价 NGINX_BIND_IP=127.0.0.1)
+  --public                     公网暴露模式: 监听全部公网 0.0.0.0 (等价 NGINX_BIND_IP=\"\")
+  --nginx-port <PORT>          自定义 Nginx 对外监听端口 (默认 443，可指定如 3443、8443)
+  --bind-ip <IP>               自定义 Nginx 监听绑定的 IP (默认: 空，表示全网卡监听)"
         echo "  --db-image <IMAGE>           指定数据库镜像（如 pgvector/pgvector:pg18 或 postgres:15-alpine）
   -m, --mode <MODE>            显式指定数据库模式 (sqlite | shared | dedicated)"
         echo "  --reconfig, --reconfig-db    重新唤起数据库决策向导，交互式切换数据库存储模式
@@ -48,6 +52,8 @@ show_cli_help() {
         echo "  ./run.sh restart -p 5175                       # 重启并变更为 5175 端口"
         echo "  ./run.sh restart --cron                        # 定时任务执行重启（零人工交互，自动采用安全默认策略）"
         echo "  ./run.sh add_nginx -d mengya.myhost.com        # 为指定域名生成独立反代配置"
+        echo "  ./run.sh add_nginx --nginx-port 3443 --local   # 生成 127.0.0.1:3443 前置代理配置并热重载
+  ./run.sh start --nginx-port 3443 --local       # 以 3443 前置代理模式启动服务"
         echo ""
         show_db_reconfig_guide
 }
