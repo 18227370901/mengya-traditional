@@ -169,6 +169,9 @@ function Start-BackendService {
         }
         & $pyCmd manage.py ensure_admin | Out-Null
 
+        Write-Host "  [会话安全] 注销所有活跃登录会话，强制客户端重新登录..."
+        & $pyCmd manage.py invalidate_tokens | Out-Null
+
         $stdoutLog = Join-Path $LOG_DIR 'backend.log'
         $stderrLog = Join-Path $LOG_DIR 'backend.err.log'
 
