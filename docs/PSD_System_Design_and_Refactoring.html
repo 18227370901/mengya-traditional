@@ -1416,6 +1416,21 @@ apps/core/                                    apps/core/
     </ul>
   </div>
 </section>
+
+<section class="adr-card" id="adr-10-72">
+  <h2>10.72 ADR 10.72：全站收藏大数紧凑化自适应、AI 长时分析动态百分比进度与随时取消、胎教故事双向一键互译与外部翻译引擎管线架构治理规范 (v2.07)</h2>
+  <div class="adr-meta"><span class="badge">Version: v2.07</span><span class="badge">Date: 2026-11-02</span><span class="badge status-accepted">Accepted</span></div>
+  <h3>10.72.1 背景与业务痛点</h3>
+  <p>商品详情页收藏按钮直接拼接数字导致“用户个人收藏”与“全站累计热度”语义混淆，且百万级大数极易撑破排版；AI 深度评测与智能待产包黑盒等待缺乏进度感知且不可随时取消；胎教故事中英维护繁琐缺乏统一外部翻译容灾管线。</p>
+  <h3>10.72.2 架构决策与设计规范</h3>
+  <ul>
+    <li><strong>全站紧凑计数格式化与收藏组件升级</strong>：统一封装 <code>formatCompactCount</code>（k/万/10万+ 封顶），<code>FavoriteButton</code> 解耦个人动作与累计热度 Badge，悬浮展示千分位人次气泡，覆盖全部内容消费页面；</li>
+    <li><strong>AI 长时处理动态进度与主动取消机制</strong>：封装 <code>AiProgressModal</code> 阶段式百分比动画进度条（0%~100%）与真实耗时反馈，Axios 层挂载 <code>AbortController</code> 实现随时主动中断与零残留自愈（商品评测 + 待产包分析）；</li>
+    <li><strong>胎教故事双向一键互译与外部翻译管线</strong>：在 <code>service_config.py</code> 挂载 <code>translation</code> 服务组，支持 AI 大模型（温情童话语境）、MyMemory 国际免Key、Google 及自定义开放端点，支持故障转移重试、连通性测试与 <code>AuditLog</code> 行为审计。</li>
+    <li><strong>权限与云端容灾零破坏</strong>：翻译与配置接口受既有权限细粒度保护，外部接口配置天生纳入 <code>CORE_BACKUP_MODELS</code> 拓扑流式备份与还原。</li>
+  </ul>
+</section>
+
 </main>
   </div>
 
@@ -2576,6 +2591,7 @@ apps/core/                                    apps/core/
 </ul>
 </section>
 
+<section id="adr-10-73"><h2>10.73 商品库 AI 一键评测生命周期竞态消除 (v2.08)</h2><p>规范组件卸载自动中止请求与路由重入状态复位机制，彻底根治切页重入从0自动重跑缺陷。</p></section>
 </body>
 
 </html>
