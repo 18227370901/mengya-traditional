@@ -6,6 +6,24 @@
 
 ---
 
+## 2026-11-10 缺陷修复与竞态消除：v2.21 版本（删末宝后首宝宝初始化豁免、`ProfilePage` 空状态引导纠偏与 `SetStageModal` 单入口原子保存）
+
+### 核心变更概览
+1. **无宝宝初始化录入首份宝宝档案权限豁免（`apps/core/views.py`）**：
+   - 修复当管理员将 `general` 默认权限模板中的 `baby_view`/`baby_create` 关闭时，用户删除最后一个宝宝回退到 `general` 模板后，通过「我的」页面或直接调用 `POST /api/babies/` 添加首份宝宝档案被 `check_permission_or_403` 拦截返回 403 的死锁缺陷；
+   - 在 `BabyViewSet.perform_create` 中，当用户当前尚无任何 `BabyProfile` 且未被管理员单独定制禁权（`_admin_customized`）时，允许初始化录入首份宝宝档案并立即自动切换至对应发育阶段权限模板；已有宝宝或被管理员单独定制禁权的用户仍严格校验 `baby_create` 权限。
+2. **「我的」页面录入表单交互与真实错误透传修复（`frontend/src/pages/ProfilePage.tsx`）**：
+   - 移除 `addBaby` 中 `.catch(() => null)` 对接口异常的静默吞并，改为透传后端精确 `message` 并增加 `addingBaby` 防连击加载态与日期必填校验；
+   - 新增 `openAndFocusAddBaby` 统一处理展开、滚动与输入框聚焦，并在 `showAdd === true` 时隐藏底部重复的「立即录入宝宝档案」引导块，彻底消除点击无反应问题。
+3. **首页快捷设置原子保存消除并发竞态（`frontend/src/components/SetStageModal.tsx` / `frontend/src/pages/HomePage.tsx`）**：
+   - 移除 `SetStageModal.handleSave` 先 `PUT /api/users/me/` 再 `POST /api/babies/` 的两段式非原子调用，改为直接通过 `createBaby`/`updateBaby` 单一入口由后端原子同步用户孕育阶段、权限模板与默认妈妈档案，根除保存间隙被 `GET /api/users/me/`（`_reconcile_user_stage_with_babies`）轮询回退 `general` 模板导致后续 `createBaby` 概率性 403 失败的竞态；
+   - 增加 `babiesReady` 初始加载保护与保存前兜底校验，并在 `HomePage.tsx` 使用 `fetchHomeData(true)` 静默刷新避免页面闪烁。
+
+### 验证结果
+- 事务回滚全链路测试验证：0 宝宝+非定制 `general` 用户（`baby_create=False`）创建首宝宝成功并自动切换阶段权限，删除后回退并可再次创建，并发 `GET /api/users/me/` 不再触发阶段回退，`_admin_customized` 禁权用户仍严格拦截返回 403；
+- 执行 `python tools/build_frontend.py` 完成前端构建（2628 modules）并同步至 `templates/` 与 `static/`（`index-CoUICGSs.js`）；
+- 执行 `powershell -ExecutionPolicy Bypass -File .\run.ps1 restart` 与 `status` 验证服务运行正常（PID 8716，端口 5173），`/healthz` 返回 `200`。
+
 ## 2026-11-10 缺陷根治与体验升级：v2.20 版本（宝宝唯一真相源阶段自愈、无宝宝空状态直达引导与权限模板自动回退）
 
 ### 核心变更概览
