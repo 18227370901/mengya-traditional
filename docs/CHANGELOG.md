@@ -6,6 +6,88 @@
 
 ---
 
+## 2026-11-10 功能优化与缺陷修复：v2.19 版本（用户阶段识别选择重置、备份清单阶段模板校验与删宝宝阶段清空修复）
+
+### 核心变更概览
+1. **单用户重置系统默认支持阶段识别与手动指定模板（`apps/core/views.py` / `frontend/src/api/auth.ts` / `frontend/src/pages/UserManagePage.tsx`）**：
+   - `AdminPermissionsView.get`（`user_id` 分支）补充返回 `stage_key`、`stage_name`、`stage_short_name`、`stage_desc` 与 `stage_template_metas`；
+   - `AdminPermissionsView.put`（`reset_to_default` 分支）支持可选 `stage_key` 参数，未传时自动匹配目标用户当前阶段模板，传入时按管理员指定阶段固化覆盖，并在弹窗中就地刷新权限树；
+   - 前端「用户独立权限管控」弹窗展示「当前匹配阶段」徽章与模板下拉选择器（标出当前阶段推荐项）。
+2. **删除宝宝档案关联状态与阶段残留根治（`apps/core/views.py` / `frontend/src/store/authStore.ts` / `frontend/src/pages/HealthPage.tsx`）**：
+   - 修复 `BabyViewSet.perform_destroy` 在删除最后一个宝宝档案后未清空 `user.due_date`、`user.baby_birthday`、`user.is_pregnant`、权限快照及 `MotherProfile` 关联，导致首页与「我的」页面仍展示已删除宝宝信息的缺陷；
+   - 强化 `authStore.ts` 中 `mergeMeResponse` 对 `stage_key` 与 `age_text` 的严格比对，并允许 `HealthPage.tsx` 正常删除最后一份宝宝档案并等待刷新同步。
+3. **WebDAV/本地容灾备份清单补充 5 阶段权限模板摘要（`apps/core/services/backup_service.py`）**：
+   - 在 `create_database_snapshot` 与 `create_full_snapshot_package` 的 `manifest.json` 补充 `stage_templates_included` 与 `stage_template_keys`，并在 `config_snapshot.json` 补充 `stage_templates_summary`，确保全部 28 张表与 5 套阶段权限模板完整受控。
+
+### 验证结果
+- 事务回滚接口验证：显式 `stage_key="toddler"` 重置、自动阶段匹配识别及删除最后一个宝宝清空用户阶段/妈妈档案均通过；
+- 全量备份包实测：`create_full_snapshot_package` 导出 28 张表，`manifest.json` 与 `config_snapshot.json` 完整包含 5 阶段模板校验摘要；
+- 执行 `python tools/build_frontend.py` 完成编译同步，重启服务（PID 49288，端口 5173）并验证线上首页已加载 `index-lo4NI5M6.js`。
+
+---
+
+## 2026-11-10 功能升级：v2.18 版本（分阶段全局默认权限模板配置与宝宝切换自动联动）
+
+### 核心变更概览
+1. **将硬编码阶段权限切换升级为 5 套可配置阶段模板（`apps/core/utils/permissions.py`）**：
+   - 此前切换宝宝档案或阶段时，仅硬编码二元切换 `menu_timeline`/`menu_recipes`/`menu_fetal_stories`/`menu_encyclopedia`；现按 `stage_utils.py` 划分为 5 套互斥阶段模板：**通用/未设置阶段 (`general`)**、**孕期阶段 (`pregnancy`)**、**新生儿期 0～28 天 (`newborn`)**、**婴儿期 1～12 个月 (`infant`)**、**幼儿及学龄前期 >12 个月 (`toddler`)**；
+   - 零表结构迁移复用 `SystemSetting.default_user_permissions`（顶层键作为 `general`，`_stage_templates` 存储分阶段模板，同时保留 `_admin_weather_city` 等内部键）；
+   - 新增 `resolve_stage_template_key`、`get_system_builtin_template`、`get_all_system_builtin_templates`、`get_saved_stage_templates` 与 `sync_user_stage_permissions`。
+2. **宝宝档案切换与个人阶段更新全链路同步（`apps/core/views.py`）**：
+   - 修复 `BabyViewSet._sync_user_stage` 此前仅更新 `is_pregnant`/`due_date`/`baby_birthday` 而未刷新权限的缺口：切换默认宝宝（`set_primary`）、新增/修改/删除主宝宝及 `MeView.put` 更新阶段时，若用户未被管理员单独定制（`_admin_customized`），立即按新阶段最新模板刷新 `custom_permissions`；
+   - `AdminPermissionsView.get`/`put` 支持分阶段模板读取/保存（`stage_key`），并返回 `stage_templates`、`system_stage_templates` 与 `stage_template_metas`；管理员点击单用户「重置为系统默认」按该用户当前阶段最新模板固化重置。
+3. **后台分阶段模板编辑与双重置按钮 UI（`frontend/src/api/auth.ts` / `frontend/src/pages/UserManagePage.tsx`）**：
+   - 在「用户与权限管控中心 → 全局默认权限模板」新增 5 阶段胶囊页签，展示各阶段启用项数与未保存红点提示，支持跨阶段草稿独立暂存与分组保存；
+   - 每个阶段模板独立提供 **「重置为上次保存」**（回退至服务端最近一次保存）与 **「重置为系统模板」**（回退至系统出厂内置默认）双回退能力。
+
+### 验证结果
+- 事务回滚全链路测试验证 `newborn` ⇄ `infant` 切换默认宝宝自动套用对应阶段模板、阶段模板独立保存、单用户重置及出厂模板比对全部通过；
+- 执行 `python tools/build_frontend.py` 编译（2628 modules）并同步 `templates/` 与 `static/`；
+- 执行 `powershell -ExecutionPolicy Bypass -File .\run.ps1 restart` 与 `status` 验证服务健康，实时接口与线上 HTML 资源校验通过。
+
+---
+
+## 2026-11-10 功能升级：v2.18 版本（5 阶段默认权限模板可配置化、切换宝宝自动同步与双重置体系）
+
+### 核心变更概览
+1. **分阶段默认权限模板引擎（`apps/core/utils/permissions.py`）**：
+   - 将原硬编码于 `get_default_permissions_for_stage` 的二元 4 项切换逻辑升级为 **5 套可独立配置的阶段权限模板**（`general` 通用/未设置、`pregnancy` 孕期未出生、`newborn` 新生儿期 0～28 天、`infant` 婴儿期 1～12 个月、`toddler` 幼儿及学龄前期 >12 个月），持久化于 `SystemSetting.default_user_permissions["_stage_templates"]` 零迁移向后兼容；
+   - 新增 `resolve_stage_template_key`、`get_system_builtin_template`、`get_all_system_builtin_templates`、`get_saved_stage_templates` 与 `sync_user_stage_permissions`。
+2. **宝宝切换实时同步与管理员分阶段接口（`apps/core/views.py`）**：
+   - `BabyViewSet._sync_user_stage` 与 `MeView.put` 统一调用 `sync_user_stage_permissions`，普通用户（未被管理员单独定制 `_admin_customized`）切换默认宝宝或修改孕育阶段时，自动按对应阶段最新模板刷新权限快照；
+   - `AdminPermissionsView` 新增返回 `stage_templates`、`system_stage_templates`、`stage_template_metas`，`PUT` 支持按 `stage_key` 独立保存阶段模板；单用户 `reset_to_default` 按用户当前阶段套用对应最新阶段模板。
+3. **后台 5 阶段配置与双重置 UI（`frontend/src/api/auth.ts` / `frontend/src/pages/UserManagePage.tsx`）**：
+   - 「全局默认权限模板」子页面顶部新增 5 阶段胶囊切换栏（显示各阶段启用项计数与未保存修改红点），支持跨阶段独立草稿、全量保存与分组保存；
+   - 每个阶段均配备 **「重置为上次保存」**（回退至服务端上次保存状态）与 **「重置为系统模板」**（回退至代码内置出厂默认配置）双重置按钮。
+
+### 验证结果
+- 事务回滚全链路测试：`newborn` ⇄ `infant` 切换默认宝宝、分阶段模板独立保存、单用户重置及内置系统模板读取全部通过；
+- 执行 `python tools/build_frontend.py` 完成前端构建（2628 modules）并同步至 `templates/` 与 `static/`；
+- 执行 `powershell -ExecutionPolicy Bypass -File .\run.ps1 restart` 与 `status` 验证服务健康（PID 39076，端口 5173），线上首页已加载最新资源 `index-LB-0oMjx.js`。
+
+---
+
+## 2026-11-10 缺陷修复：v2.17 版本（全局默认权限模板保存与用户「重置为系统默认」一致性修复）
+
+### 核心变更概览
+1. **修复重置用户权限时阶段菜单被强制覆盖的问题（`apps/core/utils/permissions.py` / `apps/core/views.py`）**：
+   - `build_initial_permissions` 新增 `apply_stage=True` 参数。管理员点击「重置为系统默认」时，`AdminPermissionsView.put`（`reset_to_default=True` 分支）传入 `apply_stage=False`，严格以管理员最新保存的全局默认权限模板固化覆盖目标用户权限，不再被 `get_default_permissions_for_stage` 无条件改写 `menu_timeline`、`menu_recipes`、`menu_fetal_stories`、`menu_encyclopedia` 四个菜单项；
+   - `apply_stage=True`（新用户注册初始化）同步改为 `bool(merged.get(sk, True)) and bool(stage_defaults[sk])`，防止全局模板已禁用的阶段菜单在注册时被反向强制开启；
+   - 同步修正 `MeView.put` 中未定制快照用户在孕育阶段变更时直接基于 `get_default_permissions_for_stage` 重算阶段菜单。
+2. **修复历史模板缺键导致父子权限向上联动失灵与树映射缺失（`apps/core/utils/permissions.py` / `frontend/src/pages/UserManagePage.tsx`）**：
+   - 补全后端 `PERMISSION_PARENT_MAP` 与前端 `UserManagePage.tsx` 中的 `PERMISSION_PARENT_MAP` 至全量 51 项父子映射（补充知识库 10 项、三方平台 2 项、备份/外部接口/贴士/注册/商品/用户/审计日志等管理模块全部子权限），实现前后端严格对齐；
+   - 修复 `normalize_permissions()` 在对比 `previous_perms` 时对历史数据库缺失键误用默认 `True`（`previous_perms.get(k, True)`）导致子权限开启无法向上开启父权限进而被强行回落 `False` 的缺陷，改为以 `DEFAULT_USER_PERMISSIONS.get(k, False)` 作为历史缺失键基准。
+3. **修复模板元数据丢失与前端基线未同步（`apps/core/views.py` / `frontend/src/pages/UserManagePage.tsx`）**：
+   - `AdminPermissionsView.put` 保存全局模板时保留 `old_tpl` 中的内部元数据键（如 `_admin_weather_city`），并向前端返回纯净 `default_permissions`；
+   - `UserManagePage.tsx` 的 `handleSavePermissions` 与 `handleSavePermissionGroup` 保存成功后立即以服务端规范化后的 `res.data?.default_permissions` 同步更新 `permissionsState` 与 `savedPermissionsState`。
+
+### 验证结果
+- 使用 `.venv\Scripts\python.exe` 执行事务回滚端到端验证：前后端 `PERMISSION_PARENT_MAP`（51 项）完全一致；模拟保存包含阶段菜单禁用、管理子权限自动向上联动开启与 `_admin_weather_city` 保留的全局模板后执行 `reset_to_default`，目标用户生效权限 78 项与已保存全局模板 100% 一致；
+- 执行 `python tools/build_frontend.py` 完成前端构建（`tsc -b && vite build`）与 `templates/`、`static/` 产物同步；
+- 执行 `powershell -ExecutionPolicy Bypass -File .\run.ps1 status` 验证服务正常运行（端口 5173）。
+
+---
+
 ## 2026-11-10 缺陷修复：v2.16 版本（三方平台管理页数量口径统一与停用平台中转站隐藏修复）
 
 ### 核心变更概览
